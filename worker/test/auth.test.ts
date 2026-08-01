@@ -1,0 +1,79 @@
+import { describe, expect, test } from "vitest";
+import { assertAssistantAccess, assertBetaAccess } from "../src/auth";
+
+describe("assertAssistantAccess", () => {
+  const env = {
+    ASSISTANT_PROXY_TOKEN: "proxy-secret",
+    ASSISTANT_EVAL_TOKEN: "eval-secret",
+    BETA_ACCESS_TOKEN: "legacy-secret",
+  };
+
+  test("authenticates the PHP proxy role", () => {
+    const request = new Request("https://worker.test/api/assistant/message", {
+      headers: { "x-assistant-proxy-token": "proxy-secret" },
+    });
+    expect(assertAssistantAccess(request, env)).toEqual({ ok: true, role: "proxy" });
+  });
+
+  test("authenticates the evaluation role", () => {
+    const request = new Request("https://worker.test/api/assistant/message", {
+      headers: { "x-assistant-eval-token": "eval-secret" },
+    });
+    expect(assertAssistantAccess(request, env)).toEqual({ ok: true, role: "eval" });
+  });
+
+  test("temporarily accepts the legacy token as a proxy caller", () => {
+    const request = new Request("https://worker.test/api/assistant/message", {
+      headers: { "x-assistant-beta-token": "legacy-secret" },
+    });
+    expect(assertAssistantAccess(request, env)).toEqual({
+      ok: true,
+      role: "proxy",
+      legacy: true,
+    });
+  });
+
+  test("rejects missing, invalid, or ambiguous caller credentials", () => {
+    const missing = new Request("https://worker.test/api/assistant/message");
+    const invalid = new Request("https://worker.test/api/assistant/message", {
+      headers: { "x-assistant-proxy-token": "wrong" },
+    });
+    const ambiguous = new Request("https://worker.test/api/assistant/message", {
+      headers: {
+        "x-assistant-proxy-token": "proxy-secret",
+        "x-assistant-eval-token": "eval-secret",
+      },
+    });
+    for (const request of [missing, invalid, ambiguous]) {
+      expect(assertAssistantAccess(request, env)).toEqual({
+        ok: false,
+        status: 401,
+        error: "invalid_assistant_token",
+      });
+    }
+  });
+});
+
+describe("assertBetaAccess", () => {
+  test("accepts a matching beta token from the request header", () => {
+    const request = new Request("https://worker.test/api/assistant/message", {
+      headers: { "x-assistant-beta-token": "secret-token" },
+    });
+
+    expect(assertBetaAccess(request, { BETA_ACCESS_TOKEN: "secret-token" })).toEqual({
+      ok: true,
+    });
+  });
+
+  test("rejects a missing or wrong beta token", () => {
+    const request = new Request("https://worker.test/api/assistant/message", {
+      headers: { "x-assistant-beta-token": "wrong" },
+    });
+
+    expect(assertBetaAccess(request, { BETA_ACCESS_TOKEN: "secret-token" })).toEqual({
+      ok: false,
+      status: 401,
+      error: "invalid_beta_token",
+    });
+  });
+});

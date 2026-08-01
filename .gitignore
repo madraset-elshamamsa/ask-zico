@@ -1,0 +1,6 @@
+node_modules/
+.local/
+.wrangler/
+.dev.vars
+coverage/
+.DS_Store

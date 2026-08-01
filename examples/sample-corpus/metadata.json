@@ -1,0 +1,11 @@
+[
+  {
+    "URL": "https://example.test/library/welcome",
+    "Title": "مرحبًا بك في المكتبة التجريبية",
+    "Library": "Ask Zico Sample",
+    "Category": "sample",
+    "Authors": "Ask Zico maintainers",
+    "Summary": "نص عربي قصير ومتاح لإثبات تشغيل مسار الاسترجاع والاستشهاد محليًا.",
+    "Keywords": ["تجربة", "مكتبة", "استشهاد"]
+  }
+]

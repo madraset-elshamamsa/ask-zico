@@ -1,0 +1,83 @@
+openapi: 3.1.0
+info:
+  title: Ask Zico Worker API
+  version: 1.0.0-draft
+  description: Citation-bound assistant API. Browser callers must use a trusted server-side proxy.
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Worker is reachable
+  /api/assistant/message:
+    post:
+      summary: Submit a grounded assistant message
+      security:
+        - proxyToken: []
+        - evaluationToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantMessageRequest'
+      responses:
+        '200':
+          description: Grounded answer or conservative fallback
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantMessageResponse'
+  /api/assistant/feedback:
+    post:
+      summary: Record a thumbs-up or thumbs-down rating
+      security:
+        - proxyToken: []
+      responses:
+        '200': { description: Feedback recorded }
+  /api/assistant/quota-status:
+    post:
+      summary: Inspect remaining caller quota
+      security:
+        - proxyToken: []
+      responses:
+        '200': { description: Quota status }
+components:
+  securitySchemes:
+    proxyToken:
+      type: apiKey
+      in: header
+      name: x-assistant-proxy-token
+    evaluationToken:
+      type: apiKey
+      in: header
+      name: x-assistant-eval-token
+  schemas:
+    AssistantMessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1 }
+        conversation_id: { type: string }
+        locale: { type: string, default: ar }
+        page_context: { type: string }
+    Citation:
+      type: object
+      required: [title, url, snippet]
+      properties:
+        title: { type: string }
+        url: { type: string, format: uri }
+        snippet: { type: string }
+    AssistantMessageResponse:
+      type: object
+      required: [message_id, answer, citations, confidence]
+      properties:
+        message_id: { type: string }
+        answer: { type: string }
+        citations:
+          type: array
+          items: { $ref: '#/components/schemas/Citation' }
+        confidence:
+          type: string
+          enum: [retrieval_only, low, medium, high]

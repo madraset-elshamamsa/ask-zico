@@ -1,0 +1,473 @@
+import { describe, expect, test } from "vitest";
+import app from "../src/index";
+import { cleanupExpiredAssistantAnswerPreviews } from "../src/observability";
+import type { Env, StoredChunk } from "../src/types";
+
+type RecordedQuery = {
+  query: string;
+  values: unknown[];
+};
+
+type TestEnv = Env & {
+  __TEST_RECORDED_QUERIES: RecordedQuery[];
+  __TEST_OBSERVABILITY_ROWS: Record<string, unknown>[];
+};
+
+function createEnv(chunks: StoredChunk[], overrides: Partial<TestEnv> = {}): TestEnv {
+  const rows = overrides.__TEST_OBSERVABILITY_ROWS ?? [];
+  const queries: RecordedQuery[] = [];
+  const env: TestEnv = {
+    BETA_ACCESS_TOKEN: "secret-token",
+    ASSISTANT_ADMIN_TOKEN: "admin-token",
+    RETRIEVAL_TOP_K: "3",
+    ASSISTANT_CHUNKS: {
+      get: async (key) => {
+        if (key === "lexical:wa3zat") {
+          return chunks;
+        }
+
+        return chunks.find((chunk) => chunk.chunk_id === key) ?? null;
+      },
+    },
+    ASSISTANT_FEEDBACK_DB: {
+      prepare: (query) => ({
+        bind: (...values) => ({
+          run: async () => {
+            queries.push({ query, values });
+            return { success: true };
+          },
+          all: async <T = Record<string, unknown>>() => {
+            queries.push({ query, values });
+            return { success: true, results: rows as T[] };
+          },
+        }),
+      }),
+    },
+    __TEST_RECORDED_QUERIES: queries,
+    __TEST_OBSERVABILITY_ROWS: rows,
+    ...overrides,
+  };
+
+  return env;
+}
+
+const chunk: StoredChunk = {
+  doc_id: "wa3zat:ElTariqElDa5ely",
+  chunk_id: "wa3zat:ElTariqElDa5ely:0",
+  title: "ا�طر�`� ا�داخ��`",
+  url: "https://madraset-elshamamsa.com/articles/wa3zat/ElTariqElDa5ely.php",
+  text: "ح�� �&شاْ� ا�ح�`اة با�� سبة ��إ� سا�  ب�`ْ���  �&�  ا�داخ��R ��ا�طر�`� ا�داخ��` �`بدأ �&�  ا���ب.",
+  search_text: "ا�طر�`� ا�داخ��` ح� �&شاْ� ا�ح�`ا�! �&�  ا�داخ� ا���ب",
+  content_type: "article",
+  library: "��عظات",
+  section: "ا�حاجة ��دخ��� إ��0 ا�أع�&ا�",
+  language: "ar",
+  semanticDomain: "ta3lim",
+};
+
+describe("assistant observability", () => {
+  test("logs grounded message events with query, user, source metadata, and booleans", async () => {
+    const env = createEnv([chunk], {
+      ASSISTANT_CHAT_MODEL: "test/model",
+      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_LLM_FETCH: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    answer: "ح�� �&شاْ� ا�ح�`اة ب�`بدأ �&�  ا�داخ� بحسب ا��&صدر.",
+                    confidence: "high",
+                    cited_chunk_ids: ["wa3zat:ElTariqElDa5ely:0"],
+                  }),
+                },
+              },
+            ],
+          }),
+        ),
+    });
+
+    const response = await app.request(
+      "/api/assistant/message",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-assistant-beta-token": "secret-token",
+        },
+        body: JSON.stringify({
+          session_id: "session-1",
+          conversation_id: "conversation-1",
+          user_id: "42",
+          message: "�`ع� �` إ�`�! ا�طر�`� ا�داخ��`�x",
+          page_context: {
+            url: "https://madraset-elshamamsa.com/chatbot/ai-beta.php",
+            title: "Chatbot",
+          },
+          locale: "ar",
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const recorded = env.__TEST_RECORDED_QUERIES ?? [];
+    const insert = recorded.find((item) =>
+      item.query.includes("INSERT INTO assistant_query_events"),
+    );
+    expect(insert).toBeDefined();
+    expect(insert?.query).toContain("answer_preview");
+    expect(insert?.query).toContain("answer_preview_truncated");
+    expect(insert?.values).toEqual(
+      expect.arrayContaining([
+        "session-1",
+        "conversation-1",
+        "42",
+        "�`ع� �` إ�`�! ا�طر�`� ا�داخ��`�x",
+        "https://madraset-elshamamsa.com/chatbot/ai-beta.php",
+        "Chatbot",
+        "ar",
+        1,
+        1,
+        1,
+        "high",
+        "grounded",
+        null,
+        "controlled_hybrid",
+        JSON.stringify(["ta3lim"]),
+        JSON.stringify(["wa3zat:ElTariqElDa5ely"]),
+        JSON.stringify(["wa3zat:ElTariqElDa5ely:0"]),
+        JSON.stringify(["https://madraset-elshamamsa.com/articles/wa3zat/ElTariqElDa5ely.php"]),
+      ]),
+    );
+  });
+
+  test("stores model provider, model name, and provider attempts on grounded events", async () => {
+    const env = createEnv([chunk], {
+      ASSISTANT_CHAT_MODEL: "test/model",
+      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_LLM_FETCH: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    answer: "The internal path starts from the heart.",
+                    confidence: "high",
+                    cited_chunk_ids: ["wa3zat:ElTariqElDa5ely:0"],
+                  }),
+                },
+              },
+            ],
+          }),
+        ),
+    });
+
+    const response = await app.request(
+      "/api/assistant/message",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-assistant-beta-token": "secret-token",
+        },
+        body: JSON.stringify({
+          session_id: "session-provider",
+          message: "provider observability",
+          normalized_query: chunk.search_text,
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const insert = env.__TEST_RECORDED_QUERIES?.find((item) =>
+      item.query.includes("INSERT INTO assistant_query_events"),
+    );
+    expect(insert?.query).toContain("model_provider");
+    expect(insert?.query).toContain("model_name");
+    expect(insert?.query).toContain("provider_fallback_reason");
+    expect(insert?.query).toContain("provider_attempts_json");
+    expect(insert?.values).toEqual(
+      expect.arrayContaining([
+        "openrouter",
+        "test/model",
+        null,
+        JSON.stringify([{ provider: "openrouter", model: "test/model", ok: true }]),
+      ]),
+    );
+  });
+  test("logs unanswered events when retrieval and citations are missing", async () => {
+    const env = createEnv([]);
+    const response = await app.request(
+      "/api/assistant/message",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-assistant-beta-token": "secret-token",
+        },
+        body: JSON.stringify({
+          session_id: "session-2",
+          message: "سؤا� �&ش �&��ج��د ف�` ا��&صادر",
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const insert = env.__TEST_RECORDED_QUERIES?.find((item) =>
+      item.query.includes("INSERT INTO assistant_query_events"),
+    );
+    expect(insert?.values).toEqual(
+      expect.arrayContaining([
+        "session-2",
+        null,
+        null,
+        "سؤا� �&ش �&��ج��د ف�` ا��&صادر",
+        null,
+        null,
+        null,
+        0,
+        0,
+        0,
+        "low",
+        "handoff",
+        "weak_retrieval",
+        "controlled_hybrid",
+        JSON.stringify([]),
+        JSON.stringify([]),
+        JSON.stringify([]),
+        JSON.stringify([]),
+      ]),
+    );
+  });
+
+  test("logs one-turn follow-up metadata on query events", async () => {
+    const env = createEnv([
+      {
+        doc_id: "wa3zat:InternalPath",
+        chunk_id: "wa3zat:InternalPath:0",
+        title: "Internal Path",
+        url: "https://madraset-elshamamsa.com/articles/wa3zat/InternalPath.php",
+        text: "The internal path starts when a person examines the heart before blaming circumstances.",
+        search_text: "internal path heart example",
+        content_type: "article",
+        library: "Wa3zat",
+        section: "Example",
+        language: "en",
+      },
+    ], {
+      ASSISTANT_CHAT_MODEL: "test/model",
+      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_LLM_FETCH: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    answer: "A simple example is examining the heart before blaming circumstances.",
+                    confidence: "high",
+                    cited_chunk_ids: ["wa3zat:InternalPath:0"],
+                  }),
+                },
+              },
+            ],
+          }),
+        ),
+    });
+
+    const response = await app.request(
+      "/api/assistant/message",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-assistant-beta-token": "secret-token",
+        },
+        body: JSON.stringify({
+          session_id: "session-follow-up",
+          conversation_id: "conversation-1",
+          message: "Can you give an example?",
+          follow_up: {
+            parent_message_id: "message-parent",
+            previous_user_message: "What is the internal path?",
+            previous_assistant_answer: "The internal path starts from the heart.",
+            previous_cited_chunk_ids: ["wa3zat:InternalPath:0"],
+          },
+          locale: "en",
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const insert = env.__TEST_RECORDED_QUERIES?.find((item) =>
+      item.query.includes("INSERT INTO assistant_query_events"),
+    );
+    expect(insert?.query).toContain("is_follow_up");
+    expect(insert?.values).toEqual(expect.arrayContaining([
+      1,
+      "message-parent",
+      JSON.stringify(["wa3zat:InternalPath:0"]),
+    ]));
+  });
+
+  test("mirrors feedback rating onto the matching query event", async () => {
+    const env = createEnv([]);
+    const response = await app.request(
+      "/api/assistant/feedback",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-assistant-beta-token": "secret-token",
+        },
+        body: JSON.stringify({
+          session_id: "session-1",
+          message_id: "message-1",
+          rating: "down",
+          created_at: "2026-06-20T10:00:00.000Z",
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(env.__TEST_RECORDED_QUERIES?.some((item) =>
+      item.query.includes("UPDATE assistant_query_events") &&
+      item.values.includes("down") &&
+      item.values.includes("message-1"),
+    )).toBe(true);
+  });
+
+  test("protects observability summary with an admin token", async () => {
+    const response = await app.request(
+      "/api/assistant/observability/summary",
+      {
+        method: "GET",
+      },
+      createEnv([]),
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_admin_token" });
+  });
+
+  test("returns observability summary aggregates", async () => {
+    const env = createEnv([], {
+      __TEST_OBSERVABILITY_ROWS: [
+        {
+          total_queries: 3,
+          answered_queries: 2,
+          retrieved_references: 2,
+          cited_references: 1,
+          likes: 1,
+          dislikes: 1,
+          neutral: 1,
+        },
+      ],
+    });
+    const response = await app.request(
+      "/api/assistant/observability/summary?range=7d",
+      {
+        method: "GET",
+        headers: {
+          "x-assistant-admin-token": "admin-token",
+        },
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      range: "7d",
+      totals: {
+        total_queries: 3,
+        answered_queries: 2,
+        retrieved_references: 2,
+        cited_references: 1,
+        likes: 1,
+        dislikes: 1,
+        neutral: 1,
+      },
+    });
+  });
+
+  test("filters observability events by topic, unanswered state, and thumbs down", async () => {
+    const env = createEnv([], {
+      __TEST_OBSERVABILITY_ROWS: [{ total_queries: 1, answered_queries: 0, retrieved_references: 0, cited_references: 0, likes: 0, dislikes: 1, neutral: 0 }],
+    });
+
+    const response = await app.request(
+      "/api/assistant/observability/summary?range=30d&topic=ta3lim&answer_state=unanswered&feedback=down",
+      { method: "GET", headers: { "x-assistant-admin-token": "admin-token" } },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const summaryQuery = env.__TEST_RECORDED_QUERIES?.find((item) => item.query.includes("COUNT(*) AS total_queries"));
+    expect(summaryQuery?.query).toContain("answered = 0");
+    expect(summaryQuery?.query).toContain("rating = ?");
+    expect(summaryQuery?.query).toContain("semantic_domains_json LIKE ?");
+    expect(summaryQuery?.values).toEqual(expect.arrayContaining(["down", "%ta3lim%"]));
+    await expect(response.json()).resolves.toMatchObject({
+      filters: { topic: "ta3lim", answer_state: "unanswered", feedback: "down" },
+    });
+  });
+
+  test("clears only answer previews older than the retention cutoff", async () => {
+    const env = createEnv([]);
+    await cleanupExpiredAssistantAnswerPreviews(env, new Date("2026-07-24T00:00:00.000Z"));
+
+    const cleanup = env.__TEST_RECORDED_QUERIES?.find((item) => item.query.includes("SET answer_preview = NULL"));
+    expect(cleanup?.query).toContain("answer_preview_truncated = 0");
+    expect(cleanup?.query).toContain("created_at < ?");
+    expect(cleanup?.values).toEqual(["2026-04-25T00:00:00.000Z"]);
+  });
+  test("logs worker CPU budget fields on query events", async () => {
+    const env = createEnv([chunk], {
+      ASSISTANT_CHAT_MODEL: "test/model",
+      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_LLM_FETCH: async () =>
+        new Response(JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({
+            answer: "Supported answer.",
+            confidence: "high",
+            cited_chunk_ids: ["wa3zat:ElTariqElDa5ely:0"],
+          }) } }],
+        })),
+    });
+
+    const response = await app.request(
+      "/api/assistant/message",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-assistant-beta-token": "secret-token",
+        },
+        body: JSON.stringify({
+          session_id: "session-cpu",
+          message: "internal path",
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const insert = env.__TEST_RECORDED_QUERIES?.find((item) =>
+      item.query.includes("INSERT INTO assistant_query_events"),
+    );
+    expect(insert?.query).toContain("worker_cpu_ms");
+    expect(insert?.query).toContain("worker_cpu_over_budget");
+    expect(insert?.query).toContain("worker_cpu_phases_json");
+    expect(insert?.values.some((value) => typeof value === "number" && value >= 0)).toBe(true);
+    expect(insert?.values.some((value) => value === 0 || value === 1)).toBe(true);
+    expect(insert?.values.some((value) => typeof value === "string" && value.includes("response_build"))).toBe(true);
+  });
+
+});

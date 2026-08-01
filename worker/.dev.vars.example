@@ -1,0 +1,5 @@
+ASSISTANT_PROXY_TOKEN=replace-with-a-strong-random-proxy-token
+ASSISTANT_EVAL_TOKEN=replace-with-a-strong-random-evaluation-token
+ASSISTANT_GEMINI_API_KEY=optional-provider-key
+ASSISTANT_LLM_API_KEY=optional-fallback-provider-key
+ASSISTANT_ADMIN_TOKEN=replace-with-a-strong-admin-token

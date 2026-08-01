@@ -1,0 +1,11 @@
+{
+  "name": "ask-zico-reference",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:tools && npm --prefix worker test",
+    "test:tools": "node --test tools/generate-rag-jsonl.test.mjs",
+    "typecheck": "npm --prefix worker run typecheck",
+    "ingest:sample": "node tools/generate-rag-jsonl.mjs"
+  }
+}

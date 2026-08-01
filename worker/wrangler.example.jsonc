@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ask-zico-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ASSISTANT_ENV": "development",
+    "ASSISTANT_PUBLIC_SITE_URL": "https://your-site.example",
+    "RETRIEVAL_TOP_K": "5",
+    "RETRIEVAL_CANDIDATE_K": "30",
+    "ASSISTANT_LEXICAL_KEYS": "lexical:sample",
+    "ASSISTANT_QUOTA_FALLBACK_MODE": "search_only"
+  },
+  "observability": { "enabled": true }
+}
