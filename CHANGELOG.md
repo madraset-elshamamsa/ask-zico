@@ -1,0 +1,21 @@
+# Changelog
+
+All notable changes are documented here. Ask Zico follows semantic versioning for release
+tags and separately versions its HTTP contract.
+
+## Unreleased
+
+No changes yet.
+
+## 1.0.0-rc.4 — 2026-08-09
+
+- Established the standalone Worker, D1 migrations, ingestion/evaluation tools, and original
+  sample corpus under the `madraset-elshamamsa` organization.
+- Published the executable OpenAPI v1 contract, fixtures, and deterministic local stub.
+- Replaced the legacy beta caller with separate proxy and evaluation credentials.
+- Added atomic quota reservations, fallback preservation, configurable public-site actions,
+  UTF-8 checks, governance files, manual deployment guidance, and credential-free CI.
+- Updated the runtime and development dependency graph to zero reported npm advisories.
+
+RC.1 and RC.2 were private integration candidates and were superseded without deployment;
+their immutable tags remain available for audit history.

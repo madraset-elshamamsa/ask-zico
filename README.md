@@ -73,6 +73,8 @@ or publishing a fork. The repository intentionally verifies build artifacts in C
 reviewed manual deployment initially; automated deployment can be added later behind a
 protected GitHub environment.
 
+Release changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+
 ## Security, contributions, and licenses
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Focused issues
