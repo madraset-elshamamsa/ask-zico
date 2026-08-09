@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "npm run test:contract && npm run test:tools && npm --prefix worker test",
-    "test:contract": "node --test --test-isolation=none contract/contract.test.mjs",
-    "test:tools": "node --test --test-isolation=none tools/*.test.mjs",
+    "test:contract": "node --test contract/contract.test.mjs",
+    "test:tools": "node --test tools/*.test.mjs",
     "lint:contract": "redocly lint contract/openapi.yaml",
     "stub:contract": "node tools/contract-stub.mjs",
     "typecheck": "npm --prefix worker run typecheck",
