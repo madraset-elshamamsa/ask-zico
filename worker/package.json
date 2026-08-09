@@ -1,5 +1,5 @@
 {
-  "name": "madraset-elshamamsa-assistant-worker",
+  "name": "ask-zico-worker",
   "private": true,
   "type": "module",
   "scripts": {
@@ -7,9 +7,10 @@
     "dev": "wrangler dev",
     "dev:docker": "wrangler dev --ip 0.0.0.0 --port 8787",
     "deploy": "wrangler deploy",
+    "deploy:dry-run": "wrangler deploy --dry-run --config wrangler.example.jsonc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "types": "wrangler types"
+    "types": "wrangler types --config wrangler.jsonc"
   },
   "dependencies": {
     "hono": "^4.6.13"

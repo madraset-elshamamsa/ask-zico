@@ -1,0 +1,32 @@
+{
+  "message_id": "message-example",
+  "conversation_id": "conversation-example",
+  "answer": "ابدأ من المصدر التالي.",
+  "citations": [
+    {
+      "title": "Welcome",
+      "url": "https://your-site.example/welcome",
+      "snippet": "Example source excerpt."
+    }
+  ],
+  "suggested_actions": [
+    {
+      "type": "navigate_to_url",
+      "label": "Welcome",
+      "url": "https://your-site.example/welcome"
+    }
+  ],
+  "confidence": "high",
+  "retrieved_chunks": [
+    {
+      "doc_id": "sample:welcome",
+      "chunk_id": "sample:welcome:0",
+      "title": "Welcome",
+      "url": "https://your-site.example/welcome"
+    }
+  ],
+  "quota": {
+    "device_daily": { "used": 1, "limit": 50, "remaining": 49 },
+    "network_daily": { "used": 1, "limit": 150, "remaining": 149 }
+  }
+}

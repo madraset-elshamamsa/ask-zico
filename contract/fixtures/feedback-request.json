@@ -1,0 +1,11 @@
+{
+  "session_id": "session-example",
+  "message_id": "message-example",
+  "conversation_id": "conversation-example",
+  "rating": "up",
+  "confidence": "high",
+  "doc_ids": ["sample:welcome"],
+  "chunk_ids": ["sample:welcome:0"],
+  "citation_urls": ["https://your-site.example/welcome"],
+  "created_at": "2026-08-09T00:00:00.000Z"
+}

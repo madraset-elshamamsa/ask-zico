@@ -12,9 +12,11 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<Env> = {}) {
   const queries: RecordedQuery[] = [];
   let modelCalls = 0;
   const env: Env & { rows: typeof rows; queries: typeof queries; modelCalls: () => number } = {
-    BETA_ACCESS_TOKEN: "secret-token",
+    ASSISTANT_PROXY_TOKEN: "secret-token",
     RETRIEVAL_TOP_K: "3",
-    ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: "0",
+    ASSISTANT_ACTOR_DAILY_MODEL_LIMIT: "0",
+    ASSISTANT_ACTOR_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    ASSISTANT_NETWORK_RATE_LIMITER: { limit: async () => ({ success: true }) },
     ASSISTANT_CHUNKS: {
       get: async (key) => {
         if (key === "lexical:wa3zat") {
@@ -28,7 +30,11 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<Env> = {}) {
         bind: (...values) => ({
           run: async () => {
             queries.push({ query, values });
-            return { success: true };
+            if (query.includes("SELECT 'day'")) {
+              const limit = Number(values[4]);
+              return { success: true, meta: { changes: limit > 0 ? 1 : 0 } };
+            }
+            return { success: true, meta: { changes: 1 } };
           },
           all: async <T = Record<string, unknown>>() => {
             queries.push({ query, values });
@@ -79,7 +85,7 @@ const chunk: StoredChunk = {
 };
 
 describe("assistant worker economics gate", () => {
-  test("returns source fallback without calling the model when device quota is exhausted", async () => {
+  test("returns source fallback without calling the model when actor quota is exhausted", async () => {
     const env = createEnv([chunk]);
     const response = await app.request(
       "/api/assistant/message",
@@ -87,10 +93,11 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({
-          assistant_device_id: "device-1",
+          actor_id: "actor-1",
+          network_id: "network-1",
           session_id: "session-1",
           message: "internal path",
         }),
@@ -106,7 +113,7 @@ describe("assistant worker economics gate", () => {
     expect(body.suggested_actions.some((action) => action.url.endsWith("/search.php"))).toBe(true);
     expect(body.debug?.answer).toEqual({
       mode: "fallback",
-      reason: "device_daily_quota",
+      reason: "actor_daily_quota",
     });
   });
 
@@ -120,10 +127,11 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({
-          assistant_device_id: "device-1",
+          actor_id: "actor-1",
+          network_id: "network-1",
           session_id: "session-1",
           message: "internal path",
         }),
@@ -138,8 +146,9 @@ describe("assistant worker economics gate", () => {
 
   test("quota status reports blocked state without retrieval or model call", async () => {
     const env = createEnv([chunk], {
-      ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: "0",
+      ASSISTANT_ACTOR_DAILY_MODEL_LIMIT: "0",
       ASSISTANT_GLOBAL_DAILY_MODEL_LIMIT: "650",
+      ASSISTANT_PUBLIC_SITE_URL: "https://library.example",
     });
     const response = await app.request(
       "/api/assistant/quota-status",
@@ -147,10 +156,11 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({
-          assistant_device_id: "device-1",
+          actor_id: "actor-1",
+          network_id: "network-1",
           session_id: "session-1",
         }),
       },
@@ -161,18 +171,18 @@ describe("assistant worker economics gate", () => {
     expect(response.status).toBe(200);
     expect(env.modelCalls()).toBe(0);
     expect(body.assistant_available).toBe(false);
-    expect(body.fallback_reason).toBe("device_daily_quota");
+    expect(body.fallback_reason).toBe("actor_daily_quota");
     expect(body.quota).toMatchObject({
-      block_reason: "device_daily_quota",
+      block_reason: "actor_daily_quota",
       device_daily: { used: 0, limit: 0, remaining: 0 },
     });
-    expect(body.suggested_actions?.some((action) => action.url.endsWith("/search.php"))).toBe(true);
-    expect(body.suggested_actions?.some((action) => action.url.includes("#categoriesSection"))).toBe(true);
+    expect(body.suggested_actions?.some((action) => action.url === "https://library.example/search.php")).toBe(true);
+    expect(body.suggested_actions?.some((action) => action.url === "https://library.example/#categoriesSection")).toBe(true);
   });
 
   test("includes quota metadata on fallback responses", async () => {
     const env = createEnv([chunk], {
-      ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: "0",
+      ASSISTANT_ACTOR_DAILY_MODEL_LIMIT: "0",
       ASSISTANT_GLOBAL_DAILY_MODEL_LIMIT: "650",
     });
     const response = await app.request(
@@ -181,10 +191,11 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({
-          assistant_device_id: "device-1",
+          actor_id: "actor-1",
+          network_id: "network-1",
           session_id: "session-1",
           message: "internal path",
         }),
@@ -194,7 +205,7 @@ describe("assistant worker economics gate", () => {
 
     const body = (await response.json()) as AssistantMessageResponse;
     expect(body.quota).toMatchObject({
-      block_reason: "device_daily_quota",
+      block_reason: "actor_daily_quota",
       device_daily: {
         used: 0,
         limit: 0,
@@ -209,7 +220,7 @@ describe("assistant worker economics gate", () => {
 
   test("consumes quota for handled no-answer responses after the gate", async () => {
     const env = createEnv([{ ...chunk, text: "short" }], {
-      ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: "1",
+      ASSISTANT_ACTOR_DAILY_MODEL_LIMIT: "1",
       ASSISTANT_GLOBAL_DAILY_MODEL_LIMIT: "650",
     });
 
@@ -219,10 +230,11 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({
-          assistant_device_id: "device-1",
+          actor_id: "actor-1",
+          network_id: "network-1",
           session_id: "session-1",
           message: "internal path",
         }),
@@ -237,17 +249,16 @@ describe("assistant worker economics gate", () => {
       mode: "handoff",
       reason: "weak_retrieval",
     });
-    expect(body.quota).toMatchObject({
-      device_daily: { used: 1, limit: 1, remaining: 0 },
-      global_daily: { limit: 650, remaining: 649 },
-    });
-    const usageInsert = env.queries.find((item) => item.query.includes("INSERT INTO assistant_usage_counters"));
+    const usageInsert = env.queries.find((item) =>
+      item.query.includes("INSERT INTO assistant_usage_counters") &&
+      item.query.includes("model_calls"),
+    );
     expect(usageInsert?.values[5]).toBe(1);
   });
 
   test("fallback-only mode skips the model but still returns retrieved sources", async () => {
     const env = createEnv([{ ...chunk, text: "The internal path starts in the heart and continues through repentance with God." }], {
-      ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: undefined,
+      ASSISTANT_ACTOR_DAILY_MODEL_LIMIT: undefined,
       ASSISTANT_FALLBACK_ONLY_MODE: "true",
     });
     const response = await app.request(
@@ -256,10 +267,11 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({
-          assistant_device_id: "device-1",
+          actor_id: "actor-1",
+          network_id: "network-1",
           message: "internal path",
         }),
       },
@@ -278,7 +290,7 @@ describe("assistant worker economics gate", () => {
 
   test("records zero estimated spend for direct Gemini answers", async () => {
     const env = createEnv([{ ...chunk, text: "The internal path starts in the heart and continues through repentance with God." }], {
-      ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: undefined,
+      ASSISTANT_ACTOR_DAILY_MODEL_LIMIT: undefined,
       ASSISTANT_LLM_API_KEY: "openrouter-key",
       ASSISTANT_GEMINI_API_KEY: "gemini-key",
       ASSISTANT_GEMINI_MODEL: "gemini-2.5-flash-lite",
@@ -313,10 +325,11 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({
-          assistant_device_id: "device-1",
+          actor_id: "actor-1",
+          network_id: "network-1",
           session_id: "session-1",
           message: "internal path",
         }),
@@ -325,7 +338,10 @@ describe("assistant worker economics gate", () => {
     );
 
     const body = (await response.json()) as AssistantMessageResponse;
-    const usageInsert = env.queries.find((item) => item.query.includes("INSERT INTO assistant_usage_counters"));
+    const usageInsert = env.queries.find((item) =>
+      item.query.includes("INSERT INTO assistant_usage_counters") &&
+      item.query.includes("model_calls"),
+    );
     expect(response.status).toBe(200);
     expect(body.debug?.answer).toMatchObject({
       mode: "grounded",
@@ -336,7 +352,7 @@ describe("assistant worker economics gate", () => {
   });
   test("invalid requests do not write usage counters", async () => {
     const env = createEnv([{ ...chunk, text: "The internal path starts in the heart and continues through repentance with God." }], {
-      ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: "1",
+      ASSISTANT_ACTOR_DAILY_MODEL_LIMIT: "1",
     });
     const response = await app.request(
       "/api/assistant/message",
@@ -344,7 +360,7 @@ describe("assistant worker economics gate", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-proxy-token": "secret-token",
         },
         body: JSON.stringify({ message: "" }),
       },

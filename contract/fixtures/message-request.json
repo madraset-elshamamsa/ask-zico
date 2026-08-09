@@ -1,0 +1,13 @@
+{
+  "session_id": "session-example",
+  "conversation_id": "conversation-example",
+  "actor_id": "opaque-actor-id",
+  "network_id": "opaque-network-id",
+  "actor_type": "anonymous",
+  "message": "كيف أبدأ؟",
+  "locale": "ar",
+  "page_context": {
+    "url": "https://your-site.example/start",
+    "title": "Start"
+  }
+}

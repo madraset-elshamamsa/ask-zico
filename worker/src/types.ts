@@ -304,10 +304,7 @@ export type AssistantAnswerDebug =
 export type AssistantAccessEnv = {
   ASSISTANT_PROXY_TOKEN?: string;
   ASSISTANT_EVAL_TOKEN?: string;
-  BETA_ACCESS_TOKEN?: string;
 };
-
-export type BetaAccessEnv = Pick<AssistantAccessEnv, "BETA_ACCESS_TOKEN">;
 
 export type AssistantLlmFetch = (
   input: RequestInfo | URL,
@@ -457,20 +454,9 @@ export type AssistantAccessResult =
   | {
     ok: true;
     role: AssistantCallerRole;
-    legacy?: true;
   }
   | {
     ok: false;
     status: 401;
     error: "invalid_assistant_token";
-  };
-
-export type BetaAccessResult =
-  | {
-    ok: true;
-  }
-  | {
-    ok: false;
-    status: 401;
-    error: "invalid_beta_token";
   };

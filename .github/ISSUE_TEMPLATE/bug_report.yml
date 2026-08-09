@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible Ask Zico defect (not a security issue)
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, visitor data, private corpus text, or vulnerability details.
+  - type: input
+    id: version
+    attributes:
+      label: Release tag and commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the smallest safe fixture or sample-corpus reproduction.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true

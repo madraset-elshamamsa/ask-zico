@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "assistant_available": true,
+  "quota": {
+    "device_daily": { "used": 0, "limit": 50, "remaining": 50 },
+    "network_daily": { "used": 0, "limit": 150, "remaining": 150 },
+    "global_daily": { "used": 0, "limit": 650, "remaining": 650 }
+  },
+  "suggested_actions": []
+}

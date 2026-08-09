@@ -11,7 +11,7 @@ one deployed product's decisions. Adapt them deliberately for your own domain.
 
 ## What is included
 
-- Cloudflare Worker, D1 migrations, and 194 regression tests.
+- Cloudflare Worker, D1 migrations, and executable Worker, contract, encoding, and ingestion tests.
 - Corpus ingestion, KV preparation, Vectorize preparation, and evaluation tools.
 - A small original Arabic sample corpus that can be generated without private paths.
 - A public API contract and examples of a protected server-side proxy pattern.
@@ -29,6 +29,7 @@ account and bindings using `worker/wrangler.example.jsonc`; never copy a product
 configuration.
 
 ```powershell
+npm ci
 cd worker
 npm ci
 npm test
@@ -49,9 +50,11 @@ in front of it. The proxy validates its own site/session context, creates an opa
 identity, and sends the private caller token to the Worker. See `examples/php-proxy/` and
 [`contract/openapi.yaml`](contract/openapi.yaml).
 
-The public contract covers `/health`, `/api/assistant/message`,
+The stable v1 contract covers `/health`, `/api/assistant/message`,
 `/api/assistant/feedback`, and `/api/assistant/quota-status`. Protected evaluation and
 observability endpoints are documented for maintainers, not browser clients.
+Executable fixtures and a local stub live under `contract/`; run the stub with
+`npm run stub:contract`.
 
 ## Development
 
@@ -63,6 +66,12 @@ npm run typecheck
 Release tags follow semantic versioning. A compatible integration pins a reviewed release
 and validates against the published contract fixtures; no release workflow should deploy a
 consumer automatically.
+
+See [deployment](docs/deployment.md), [integration](docs/integration.md),
+[operations](docs/operations.md), and [release readiness](docs/releasing.md) before operating
+or publishing a fork. The repository intentionally verifies build artifacts in CI but uses a
+reviewed manual deployment initially; automated deployment can be added later behind a
+protected GitHub environment.
 
 ## Security, contributions, and licenses
 

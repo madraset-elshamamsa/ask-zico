@@ -17,8 +17,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: worker/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+      - run: npm ci
       - run: npm ci --prefix worker
       - run: npm test
+      - run: npm run lint:contract
       - run: npm run typecheck
       - run: npm run ingest:sample
+      - run: npm --prefix worker run deploy:dry-run

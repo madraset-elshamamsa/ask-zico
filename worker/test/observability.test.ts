@@ -17,7 +17,7 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<TestEnv> = {}): Tes
   const rows = overrides.__TEST_OBSERVABILITY_ROWS ?? [];
   const queries: RecordedQuery[] = [];
   const env: TestEnv = {
-    BETA_ACCESS_TOKEN: "secret-token",
+    ASSISTANT_EVAL_TOKEN: "secret-token",
     ASSISTANT_ADMIN_TOKEN: "admin-token",
     RETRIEVAL_TOP_K: "3",
     ASSISTANT_CHUNKS: {
@@ -34,7 +34,7 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<TestEnv> = {}): Tes
         bind: (...values) => ({
           run: async () => {
             queries.push({ query, values });
-            return { success: true };
+            return { success: true, meta: { changes: 1 } };
           },
           all: async <T = Record<string, unknown>>() => {
             queries.push({ query, values });
@@ -54,13 +54,13 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<TestEnv> = {}): Tes
 const chunk: StoredChunk = {
   doc_id: "wa3zat:ElTariqElDa5ely",
   chunk_id: "wa3zat:ElTariqElDa5ely:0",
-  title: "ا�طر�`� ا�داخ��`",
+  title: "الطريق الداخلي",
   url: "https://madraset-elshamamsa.com/articles/wa3zat/ElTariqElDa5ely.php",
-  text: "ح�� �&شاْ� ا�ح�`اة با�� سبة ��إ� سا�  ب�`ْ���  �&�  ا�داخ��R ��ا�طر�`� ا�داخ��` �`بدأ �&�  ا���ب.",
-  search_text: "ا�طر�`� ا�داخ��` ح� �&شاْ� ا�ح�`ا�! �&�  ا�داخ� ا���ب",
+  text: "حل مشاكل الحياة بالنسبة للإنسان يبدأ من الداخل، والطريق الداخلي يبدأ من القلب.",
+  search_text: "الطريق الداخلي حل مشاكل الحياة من الداخل القلب",
   content_type: "article",
-  library: "��عظات",
-  section: "ا�حاجة ��دخ��� إ��0 ا�أع�&ا�",
+  library: "عظات",
+  section: "الحاجة للدخول إلى الأعماق",
   language: "ar",
   semanticDomain: "ta3lim",
 };
@@ -69,7 +69,7 @@ describe("assistant observability", () => {
   test("logs grounded message events with query, user, source metadata, and booleans", async () => {
     const env = createEnv([chunk], {
       ASSISTANT_CHAT_MODEL: "test/model",
-      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_EVAL_LLM_API_KEY: "test-key",
       ASSISTANT_LLM_FETCH: async () =>
         new Response(
           JSON.stringify({
@@ -77,7 +77,7 @@ describe("assistant observability", () => {
               {
                 message: {
                   content: JSON.stringify({
-                    answer: "ح�� �&شاْ� ا�ح�`اة ب�`بدأ �&�  ا�داخ� بحسب ا��&صدر.",
+                    answer: "حل مشاكل الحياة يبدأ من الداخل بحسب المصدر.",
                     confidence: "high",
                     cited_chunk_ids: ["wa3zat:ElTariqElDa5ely:0"],
                   }),
@@ -94,13 +94,13 @@ describe("assistant observability", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-1",
           conversation_id: "conversation-1",
           user_id: "42",
-          message: "�`ع� �` إ�`�! ا�طر�`� ا�داخ��`�x",
+          message: "يعني إيه الطريق الداخلي؟",
           page_context: {
             url: "https://madraset-elshamamsa.com/chatbot/ai-beta.php",
             title: "Chatbot",
@@ -124,7 +124,7 @@ describe("assistant observability", () => {
         "session-1",
         "conversation-1",
         "42",
-        "�`ع� �` إ�`�! ا�طر�`� ا�داخ��`�x",
+        "يعني إيه الطريق الداخلي؟",
         "https://madraset-elshamamsa.com/chatbot/ai-beta.php",
         "Chatbot",
         "ar",
@@ -146,7 +146,7 @@ describe("assistant observability", () => {
   test("stores model provider, model name, and provider attempts on grounded events", async () => {
     const env = createEnv([chunk], {
       ASSISTANT_CHAT_MODEL: "test/model",
-      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_EVAL_LLM_API_KEY: "test-key",
       ASSISTANT_LLM_FETCH: async () =>
         new Response(
           JSON.stringify({
@@ -171,7 +171,7 @@ describe("assistant observability", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-provider",
@@ -207,11 +207,11 @@ describe("assistant observability", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-2",
-          message: "سؤا� �&ش �&��ج��د ف�` ا��&صادر",
+          message: "سؤال مش موجود في المصادر",
         }),
       },
       env,
@@ -226,7 +226,7 @@ describe("assistant observability", () => {
         "session-2",
         null,
         null,
-        "سؤا� �&ش �&��ج��د ف�` ا��&صادر",
+        "سؤال مش موجود في المصادر",
         null,
         null,
         null,
@@ -261,7 +261,7 @@ describe("assistant observability", () => {
       },
     ], {
       ASSISTANT_CHAT_MODEL: "test/model",
-      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_EVAL_LLM_API_KEY: "test-key",
       ASSISTANT_LLM_FETCH: async () =>
         new Response(
           JSON.stringify({
@@ -286,7 +286,7 @@ describe("assistant observability", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-follow-up",
@@ -324,7 +324,7 @@ describe("assistant observability", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-1",
@@ -431,7 +431,7 @@ describe("assistant observability", () => {
   test("logs worker CPU budget fields on query events", async () => {
     const env = createEnv([chunk], {
       ASSISTANT_CHAT_MODEL: "test/model",
-      ASSISTANT_LLM_API_KEY: "test-key",
+      ASSISTANT_EVAL_LLM_API_KEY: "test-key",
       ASSISTANT_LLM_FETCH: async () =>
         new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify({
@@ -448,7 +448,7 @@ describe("assistant observability", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-cpu",

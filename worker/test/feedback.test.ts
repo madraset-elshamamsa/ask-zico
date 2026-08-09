@@ -6,7 +6,7 @@ function createFeedbackEnv(overrides: Partial<Env> = {}): Env {
   const inserts: unknown[][] = [];
 
   return {
-    BETA_ACCESS_TOKEN: "secret-token",
+    ASSISTANT_EVAL_TOKEN: "secret-token",
     ASSISTANT_FEEDBACK_DB: {
       prepare: (query) => ({
         bind: (...values) => ({
@@ -51,7 +51,7 @@ describe("assistant feedback endpoint", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "",
@@ -77,7 +77,7 @@ describe("assistant feedback endpoint", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-1",
@@ -130,7 +130,7 @@ describe("assistant feedback endpoint", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           session_id: "session-1",

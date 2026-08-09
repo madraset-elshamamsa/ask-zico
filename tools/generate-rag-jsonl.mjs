@@ -1214,8 +1214,8 @@ function writeReport(filePath, report) {
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
+export function generateRagCorpus(argv = process.argv.slice(2), logger = console) {
+  const args = parseArgs(argv);
   ensureDir(args.outDir);
 
   const metadata = JSON.parse(readText(args.metadata));
@@ -1260,15 +1260,19 @@ function main() {
     samples: chunks.slice(0, 8),
   });
 
-  console.log(`Wrote ${chunks.length} chunks to ${jsonlPath}`);
-  console.log(`Wrote ${chunks.length} chunks to ${jsonPath}`);
-  console.log(`Wrote ${chunks.length} chunk JSON files to ${chunkJsonDir}`);
-  console.log(`Wrote ${chunks.length} AI Search markdown files to ${searchDocsDir}`);
-  console.log(`Wrote chunk lookup to ${chunkLookupPath}`);
-  console.log(`Wrote report to ${reportPath}`);
+  logger.log(`Wrote ${chunks.length} chunks to ${jsonlPath}`);
+  logger.log(`Wrote ${chunks.length} chunks to ${jsonPath}`);
+  logger.log(`Wrote ${chunks.length} chunk JSON files to ${chunkJsonDir}`);
+  logger.log(`Wrote ${chunks.length} AI Search markdown files to ${searchDocsDir}`);
+  logger.log(`Wrote chunk lookup to ${chunkLookupPath}`);
+  logger.log(`Wrote report to ${reportPath}`);
   if (missing.length) {
-    console.log(`Missing ${missing.length} source documents`);
+    logger.log(`Missing ${missing.length} source documents`);
   }
+
+  return { chunks, missing, outDir: args.outDir };
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  generateRagCorpus();
+}

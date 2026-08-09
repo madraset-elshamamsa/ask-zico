@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assertAssistantAccess, assertBetaAccess } from "../src/auth";
+import { assertAssistantAccess } from "../src/auth";
 
 describe("assertAssistantAccess", () => {
   const env = {
@@ -22,14 +22,14 @@ describe("assertAssistantAccess", () => {
     expect(assertAssistantAccess(request, env)).toEqual({ ok: true, role: "eval" });
   });
 
-  test("temporarily accepts the legacy token as a proxy caller", () => {
+  test("rejects the retired legacy beta token", () => {
     const request = new Request("https://worker.test/api/assistant/message", {
       headers: { "x-assistant-beta-token": "legacy-secret" },
     });
     expect(assertAssistantAccess(request, env)).toEqual({
-      ok: true,
-      role: "proxy",
-      legacy: true,
+      ok: false,
+      status: 401,
+      error: "invalid_assistant_token",
     });
   });
 
@@ -51,29 +51,5 @@ describe("assertAssistantAccess", () => {
         error: "invalid_assistant_token",
       });
     }
-  });
-});
-
-describe("assertBetaAccess", () => {
-  test("accepts a matching beta token from the request header", () => {
-    const request = new Request("https://worker.test/api/assistant/message", {
-      headers: { "x-assistant-beta-token": "secret-token" },
-    });
-
-    expect(assertBetaAccess(request, { BETA_ACCESS_TOKEN: "secret-token" })).toEqual({
-      ok: true,
-    });
-  });
-
-  test("rejects a missing or wrong beta token", () => {
-    const request = new Request("https://worker.test/api/assistant/message", {
-      headers: { "x-assistant-beta-token": "wrong" },
-    });
-
-    expect(assertBetaAccess(request, { BETA_ACCESS_TOKEN: "secret-token" })).toEqual({
-      ok: false,
-      status: 401,
-      error: "invalid_beta_token",
-    });
   });
 });

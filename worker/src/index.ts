@@ -34,13 +34,20 @@ import {
 import type { AssistantMessageRequest, AssistantMessageResponse, AssistantWorkerCpuTiming, AssistantWorkerProfileTiming, Env, RetrievedChunk } from "./types";
 
 const WORKER_CPU_BUDGET_MS = 8;
+const CONTRACT_VERSION = "1.0.0";
 
 const app = new Hono<{ Bindings: Env }>();
+
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set("x-ask-zico-contract-version", CONTRACT_VERSION);
+});
 
 app.get("/health", (c) =>
   c.json({
     ok: true,
-    service: "assistant",
+    service: "ask-zico",
+    contract_version: CONTRACT_VERSION,
   }),
 );
 
@@ -62,18 +69,13 @@ app.post("/api/assistant/quota-status", async (c) => {
     return c.json({ error: "invalid_request" }, 400);
   }
 
-  const gate = access.legacy
-    ? await checkAssistantEconomicsGate(c.env, {
-      deviceId: request.assistant_device_id,
-      sessionId: request.session_id,
-      userId: request.user_id,
-    })
-    : await inspectAssistantQuota(c.env, {
-      role: access.role,
-      actorId: request.actor_id,
-      networkId: request.network_id,
-    });
+  const gate = await inspectAssistantQuota(c.env, {
+    role: access.role,
+    actorId: request.actor_id,
+    networkId: request.network_id,
+  });
   const quota = gate.quota;
+  const publicSiteUrl = (c.env.ASSISTANT_PUBLIC_SITE_URL?.trim() || "https://example.com").replace(/\/$/, "");
   return c.json({
     ok: true,
     assistant_available: gate.action === "allow",
@@ -81,8 +83,8 @@ app.post("/api/assistant/quota-status", async (c) => {
     quota,
     suggested_actions: gate.action === "fallback"
       ? [
-        { type: "navigate_to_url", label: "بحث في الموقع", url: "https://madraset-elshamamsa.com/search.php" },
-        { type: "navigate_to_url", label: "مكتبات الموقع", url: "https://madraset-elshamamsa.com/#categoriesSection" },
+        { type: "navigate_to_url", label: "بحث في الموقع", url: `${publicSiteUrl}/search.php` },
+        { type: "navigate_to_url", label: "مكتبات الموقع", url: `${publicSiteUrl}/#categoriesSection` },
       ]
       : [],
   });
@@ -110,7 +112,6 @@ app.post("/api/assistant/message", async (c) => {
 
   if (
     access.role === "proxy" &&
-    !access.legacy &&
     (request.retrieval_only ||
       request.debug ||
       request.normalized_query !== undefined ||
@@ -119,7 +120,7 @@ app.post("/api/assistant/message", async (c) => {
     return c.json({ error: "caller_capability_forbidden" }, 403);
   }
 
-  if (access.role === "proxy" && !access.legacy) {
+  if (access.role === "proxy") {
     const burst = await enforceAssistantBurstLimits(c.env, {
       actorId: request.actor_id,
       networkId: request.network_id,
@@ -136,26 +137,33 @@ app.post("/api/assistant/message", async (c) => {
   const retrievalQuery = request.retrieval_query ?? buildRetrievalQuery(request);
   const normalizedQuery = request.normalized_query ?? cpu.measure("normalization_routing", () => normalizeArabicForSearch(retrievalQuery));
 
-  if (!access.legacy && !request.retrieval_only) {
-    const reservation = await reserveAssistantQuota(c.env, {
+  if (!request.retrieval_only) {
+    const quotaPreflight = await inspectAssistantQuota(c.env, {
       role: access.role,
       actorId: request.actor_id,
       networkId: request.network_id,
     });
-    if (reservation.action === "fallback") {
+    if (
+      quotaPreflight.action === "fallback" &&
+      (quotaPreflight.reason === "quota_storage_unavailable" ||
+        quotaPreflight.reason === "quota_identity_unavailable")
+    ) {
       const response = createFallbackAnswerResponse({
         conversationId: request.conversation_id,
         query: request.message,
         normalizedQuery,
         chunks: [],
-        fallbackReason: reservation.reason,
+        fallbackReason: quotaPreflight.reason,
         fallbackMode: quotaFallbackMode(c.env),
         siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
+        quota: quotaPreflight.quota,
+        includeFullRetrievedChunks: request.debug === true,
       });
       finalizeResponseCpu(response, cpu);
       return c.json(response);
     }
   }
+
   const retrievedChunks = await retrieveChunks(c.env, normalizedQuery, cpu);
   const chunks = request.follow_up
     ? mergeChunks(
@@ -176,44 +184,50 @@ app.post("/api/assistant/message", async (c) => {
     return c.json(response);
   }
 
-  const gate = access.legacy
-    ? await checkAssistantEconomicsGate(c.env, {
-      deviceId: request.assistant_device_id,
-      sessionId: request.session_id,
-      userId: request.user_id,
-    })
-    : { action: "allow" as const };
-
-  if (gate.action === "fallback") {
-    const response = cpu.measure("response_build", () => createFallbackAnswerResponse({
+  const economicsGate = await checkAssistantEconomicsGate(c.env, {
+    deviceId: request.actor_id ?? request.assistant_device_id,
+    sessionId: request.session_id,
+    userId: request.user_id,
+  });
+  if (economicsGate.action === "fallback") {
+    const response = createFallbackAnswerResponse({
       conversationId: request.conversation_id,
       query: request.message,
       normalizedQuery,
       chunks,
-      fallbackReason: gate.reason,
+      fallbackReason: economicsGate.reason,
       fallbackMode: quotaFallbackMode(c.env),
-        siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
-      quota: gate.quota,
+      siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
+      quota: economicsGate.quota,
       includeFullRetrievedChunks: request.debug === true,
-    }));
+    });
     finalizeResponseCpu(response, cpu);
+    return c.json(response);
+  }
 
-    await cpu.measureAsync("observability_scheduling", () => scheduleAssistantQueryEvent(c, {
-      request,
-      response,
+  const reservation = await reserveAssistantQuota(c.env, {
+    role: access.role,
+    actorId: request.actor_id,
+    networkId: request.network_id,
+  });
+  if (reservation.action === "fallback") {
+    const quotaStatus = await inspectAssistantQuota(c.env, {
+      role: access.role,
+      actorId: request.actor_id,
+      networkId: request.network_id,
+    });
+    const response = createFallbackAnswerResponse({
+      conversationId: request.conversation_id,
+      query: request.message,
       normalizedQuery,
       chunks,
-      startedAt,
-      workerCpu: snapshotCpu(cpu),
-    }));
-    finalizeResponseCpu(response, cpu);
-    await scheduleAssistantUsage(c, {
-      request,
-      responseKind: "fallback",
-      quotaConsumed: false,
-      estimatedUsd: 0,
+      fallbackReason: reservation.reason,
+      fallbackMode: quotaFallbackMode(c.env),
+      siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
+      quota: quotaStatus.quota,
+      includeFullRetrievedChunks: request.debug === true,
     });
-
+    finalizeResponseCpu(response, cpu);
     return c.json(response);
   }
 
@@ -232,7 +246,7 @@ app.post("/api/assistant/message", async (c) => {
       fallbackReason: "model_provider_error",
       fallbackMode: quotaFallbackMode(c.env),
         siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
-      quota: quotaAfterQuotaConsumption(gate.quota),
+      quota: quotaAfterQuotaConsumption(undefined),
       includeFullRetrievedChunks: request.debug === true,
     }));
     finalizeResponseCpu(response, cpu);
@@ -249,7 +263,7 @@ app.post("/api/assistant/message", async (c) => {
     await scheduleAssistantUsage(c, {
       request,
       responseKind: "fallback",
-      quotaConsumed: access.legacy === true,
+      quotaConsumed: true,
       estimatedUsd: undefined,
     });
 
@@ -265,7 +279,7 @@ app.post("/api/assistant/message", async (c) => {
     chunks,
     groundedAnswer,
     answerDebug: answerResult.debug,
-    quota: quotaAfterQuotaConsumption(gate.quota),
+    quota: quotaAfterQuotaConsumption(undefined),
     includeFullRetrievedChunks: request.debug === true,
   }));
   finalizeResponseCpu(response, cpu);
@@ -282,7 +296,7 @@ app.post("/api/assistant/message", async (c) => {
   await scheduleAssistantUsage(c, {
     request,
     responseKind: answerResult.ok ? "model" : "fallback",
-    quotaConsumed: access.legacy === true,
+    quotaConsumed: true,
     estimatedUsd: answerResult.ok && answerResult.debug.mode === "grounded"
       ? answerResult.debug.estimated_model_cost_usd ?? estimateModelCostUsd(c.env)
       : undefined,
@@ -547,7 +561,7 @@ app.post("/debug/retrieval", async (c) => {
     return c.json({ error: access.error }, access.status);
   }
 
-  if (access.role !== "eval" && !access.legacy) {
+  if (access.role !== "eval") {
     return c.json({ error: "caller_capability_forbidden" }, 403);
   }
 

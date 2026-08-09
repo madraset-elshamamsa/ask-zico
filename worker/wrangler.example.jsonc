@@ -10,7 +10,43 @@
     "RETRIEVAL_TOP_K": "5",
     "RETRIEVAL_CANDIDATE_K": "30",
     "ASSISTANT_LEXICAL_KEYS": "lexical:sample",
-    "ASSISTANT_QUOTA_FALLBACK_MODE": "search_only"
+    "ASSISTANT_QUOTA_FALLBACK_MODE": "search_only",
+    "ASSISTANT_ACTOR_DAILY_MODEL_LIMIT": "50",
+    "ASSISTANT_NETWORK_DAILY_MODEL_LIMIT": "150",
+    "ASSISTANT_GLOBAL_DAILY_MODEL_LIMIT": "650"
   },
+  "kv_namespaces": [
+    {
+      "binding": "ASSISTANT_CHUNKS",
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "ASSISTANT_FEEDBACK_DB",
+      "database_name": "ask-zico-example",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vectorize": [
+    {
+      "binding": "ASSISTANT_VECTORIZE",
+      "index_name": "ask-zico-example"
+    }
+  ],
+  "ai": { "binding": "ASSISTANT_AI" },
+  "ratelimits": [
+    {
+      "name": "ASSISTANT_ACTOR_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "ASSISTANT_NETWORK_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "observability": { "enabled": true }
 }

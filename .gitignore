@@ -2,5 +2,7 @@ node_modules/
 .local/
 .wrangler/
 .dev.vars
+worker/wrangler.jsonc
+worker/worker-configuration.d.ts
 coverage/
 .DS_Store

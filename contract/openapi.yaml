@@ -1,17 +1,38 @@
 openapi: 3.1.0
 info:
   title: Ask Zico Worker API
-  version: 1.0.0-draft
-  description: Citation-bound assistant API. Browser callers must use a trusted server-side proxy.
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+  description: >-
+    Versioned contract between Ask Zico and a trusted application proxy. Browser
+    callers must never receive Worker credentials.
+servers:
+  - url: https://ask-zico.example
 paths:
   /health:
     get:
-      summary: Health check
+      operationId: health
+      summary: Check Worker availability and contract version
+      security: []
       responses:
         '200':
           description: Worker is reachable
+          headers:
+            x-ask-zico-contract-version:
+              $ref: '#/components/headers/ContractVersion'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+        '404':
+          description: Route not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/assistant/message:
     post:
+      operationId: createAssistantMessage
       summary: Submit a grounded assistant message
       security:
         - proxyToken: []
@@ -20,64 +41,262 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/AssistantMessageRequest'
+            schema: { $ref: '#/components/schemas/AssistantMessageRequest' }
       responses:
         '200':
-          description: Grounded answer or conservative fallback
+          description: Grounded answer, conservative fallback, or retrieval-only result
+          headers:
+            x-ask-zico-contract-version:
+              $ref: '#/components/headers/ContractVersion'
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/AssistantMessageResponse'
+              schema: { $ref: '#/components/schemas/AssistantMessageResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/assistant/feedback:
     post:
+      operationId: recordAssistantFeedback
       summary: Record a thumbs-up or thumbs-down rating
       security:
         - proxyToken: []
+        - evaluationToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssistantFeedbackRequest' }
       responses:
-        '200': { description: Feedback recorded }
+        '200':
+          description: Feedback recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OkResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/assistant/quota-status:
     post:
-      summary: Inspect remaining caller quota
+      operationId: inspectAssistantQuota
+      summary: Inspect remaining caller quota without consuming it
       security:
         - proxyToken: []
+        - evaluationToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuotaStatusRequest' }
       responses:
-        '200': { description: Quota status }
+        '200':
+          description: Current quota status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotaStatusResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 components:
+  headers:
+    ContractVersion:
+      description: Semantic version of the response contract
+      schema: { type: string, const: 1.0.0 }
   securitySchemes:
     proxyToken:
       type: apiKey
       in: header
       name: x-assistant-proxy-token
+      description: Secret held only by the trusted application proxy.
     evaluationToken:
       type: apiKey
       in: header
       name: x-assistant-eval-token
+      description: Separate maintainer credential with evaluation controls.
+  responses:
+    InvalidRequest:
+      description: Invalid JSON or request shape
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Missing or invalid caller credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Caller is not allowed to use requested controls
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Burst limit reached or challenge required
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unavailable:
+      description: Required service or storage is unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
   schemas:
+    NonEmptyString: { type: string, minLength: 1 }
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, service, contract_version]
+      properties:
+        ok: { type: boolean, const: true }
+        service: { type: string, const: ask-zico }
+        contract_version: { type: string, const: 1.0.0 }
+    PageContext:
+      type: object
+      additionalProperties: false
+      properties:
+        url: { type: string }
+        title: { type: string }
+    FollowUpContext:
+      type: object
+      additionalProperties: false
+      required: [parent_message_id, previous_user_message, previous_assistant_answer, previous_cited_chunk_ids]
+      properties:
+        parent_message_id: { $ref: '#/components/schemas/NonEmptyString' }
+        previous_user_message: { type: string, minLength: 1, maxLength: 1200 }
+        previous_assistant_answer: { type: string, minLength: 1, maxLength: 1200 }
+        previous_cited_chunk_ids:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/NonEmptyString' }
     AssistantMessageRequest:
       type: object
+      additionalProperties: false
       required: [message]
       properties:
-        message: { type: string, minLength: 1 }
-        conversation_id: { type: string }
+        message: { type: string, minLength: 1, maxLength: 800 }
+        session_id: { $ref: '#/components/schemas/NonEmptyString' }
+        conversation_id: { $ref: '#/components/schemas/NonEmptyString' }
+        assistant_device_id: { $ref: '#/components/schemas/NonEmptyString', deprecated: true }
+        user_id: { $ref: '#/components/schemas/NonEmptyString' }
+        actor_id: { $ref: '#/components/schemas/NonEmptyString' }
+        network_id: { $ref: '#/components/schemas/NonEmptyString' }
+        actor_type: { type: string, enum: [anonymous, authenticated] }
+        challenge_verified: { type: boolean }
         locale: { type: string, default: ar }
-        page_context: { type: string }
+        page_context: { $ref: '#/components/schemas/PageContext' }
+        follow_up: { $ref: '#/components/schemas/FollowUpContext' }
+        normalized_query: { type: string, description: Evaluation callers only. }
+        retrieval_query: { type: string, description: Evaluation callers only. }
+        retrieval_only: { type: boolean, description: Evaluation callers only. }
+        debug: { type: boolean, description: Evaluation callers only. }
     Citation:
       type: object
+      additionalProperties: false
       required: [title, url, snippet]
       properties:
         title: { type: string }
         url: { type: string, format: uri }
         snippet: { type: string }
+    SuggestedAction:
+      type: object
+      additionalProperties: false
+      required: [type, label, url]
+      properties:
+        type: { type: string, const: navigate_to_url }
+        label: { type: string }
+        url: { type: string, format: uri }
+    RetrievedChunk:
+      type: object
+      required: [doc_id, chunk_id, title, url]
+      properties:
+        doc_id: { type: string }
+        chunk_id: { type: string }
+        title: { type: string }
+        url: { type: string, format: uri }
+        text: { type: string }
+        score: { type: number }
+        content_type: { type: string }
+        library: { type: string }
+        source_library: { type: string }
+        section: { type: string }
+        language: { type: string }
+        semanticDomain: { type: string }
+        facets: { type: array, items: { type: string } }
+    QuotaWindow:
+      type: object
+      additionalProperties: false
+      required: [used, limit, remaining]
+      properties:
+        used: { type: number, minimum: 0 }
+        limit: { type: number, minimum: 0 }
+        remaining: { type: number, minimum: 0 }
+    QuotaMetadata:
+      type: object
+      properties:
+        device_daily: { $ref: '#/components/schemas/QuotaWindow' }
+        network_daily: { $ref: '#/components/schemas/QuotaWindow' }
+        evaluation_daily: { $ref: '#/components/schemas/QuotaWindow' }
+        global_daily: { $ref: '#/components/schemas/QuotaWindow' }
+        global_monthly: { $ref: '#/components/schemas/QuotaWindow' }
+        monthly_budget: { $ref: '#/components/schemas/QuotaWindow' }
+        exempt: { type: boolean }
+        block_reason: { type: string }
     AssistantMessageResponse:
       type: object
-      required: [message_id, answer, citations, confidence]
+      additionalProperties: false
+      required: [message_id, answer, citations, suggested_actions, confidence, retrieved_chunks]
       properties:
         message_id: { type: string }
+        conversation_id: { type: string }
         answer: { type: string }
-        citations:
-          type: array
-          items: { $ref: '#/components/schemas/Citation' }
-        confidence:
-          type: string
-          enum: [retrieval_only, low, medium, high]
+        citations: { type: array, items: { $ref: '#/components/schemas/Citation' } }
+        suggested_actions: { type: array, items: { $ref: '#/components/schemas/SuggestedAction' } }
+        confidence: { type: string, enum: [retrieval_only, low, medium, high] }
+        trace_id: { type: string }
+        retrieved_chunks: { type: array, items: { $ref: '#/components/schemas/RetrievedChunk' } }
+        quota: { $ref: '#/components/schemas/QuotaMetadata' }
+        debug: { type: object, additionalProperties: true }
+    AssistantFeedbackRequest:
+      type: object
+      additionalProperties: false
+      required: [session_id, message_id, rating, created_at]
+      properties:
+        session_id: { $ref: '#/components/schemas/NonEmptyString' }
+        message_id: { $ref: '#/components/schemas/NonEmptyString' }
+        conversation_id: { type: string }
+        rating: { type: string, enum: [up, down] }
+        confidence: { type: string, enum: [retrieval_only, low, medium, high] }
+        doc_ids: { type: array, items: { type: string } }
+        chunk_ids: { type: array, items: { type: string } }
+        citation_urls: { type: array, items: { type: string, format: uri } }
+        created_at: { type: string, format: date-time }
+    QuotaStatusRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        actor_id: { $ref: '#/components/schemas/NonEmptyString' }
+        network_id: { $ref: '#/components/schemas/NonEmptyString' }
+        assistant_device_id: { $ref: '#/components/schemas/NonEmptyString', deprecated: true }
+        session_id: { type: string }
+        user_id: { type: string }
+    QuotaStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, assistant_available, suggested_actions]
+      properties:
+        ok: { type: boolean, const: true }
+        assistant_available: { type: boolean }
+        fallback_reason: { type: string }
+        quota: { $ref: '#/components/schemas/QuotaMetadata' }
+        suggested_actions: { type: array, items: { $ref: '#/components/schemas/SuggestedAction' } }
+    OkResponse:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: { type: boolean, const: true }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        challenge: { type: boolean }

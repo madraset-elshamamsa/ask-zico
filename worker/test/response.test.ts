@@ -207,6 +207,7 @@ describe("createFallbackAnswerResponse", () => {
         },
       ],
       fallbackReason: "device_daily_quota",
+      siteUrl: "https://madraset-elshamamsa.com",
     });
 
     expect(response.answer).toContain("وصلت للحد اليومي");
@@ -250,6 +251,7 @@ describe("createFallbackAnswerResponse fallback modes", () => {
       ],
       fallbackReason: "device_daily_quota",
       fallbackMode: "search_only",
+      siteUrl: "https://madraset-elshamamsa.com",
     });
 
     expect(response.citations).toEqual([]);

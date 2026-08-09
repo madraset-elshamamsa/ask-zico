@@ -4,8 +4,16 @@ import type { AssistantMessageResponse, Env, StoredChunk } from "../src/types";
 
 function createEnv(chunks: StoredChunk[], overrides: Partial<Env> = {}): Env {
   return {
-    BETA_ACCESS_TOKEN: "secret-token",
+    ASSISTANT_EVAL_TOKEN: "secret-token",
     RETRIEVAL_TOP_K: "3",
+    ASSISTANT_FEEDBACK_DB: {
+      prepare: () => ({
+        bind: () => ({
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+          all: async () => ({ success: true, results: [] }),
+        }),
+      }),
+    },
     ASSISTANT_CHUNKS: {
       get: async (key) => {
         if (key === "lexical:wa3zat") {
@@ -24,9 +32,11 @@ describe("assistant worker", () => {
     const response = await app.request("/health", {}, createEnv([]));
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("x-ask-zico-contract-version")).toBe("1.0.0");
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      service: "assistant",
+      service: "ask-zico",
+      contract_version: "1.0.0",
     });
   });
 
@@ -53,7 +63,7 @@ describe("assistant worker", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({ message: "" }),
       },
@@ -74,7 +84,7 @@ describe("assistant worker", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           conversation_id: "conversation-1",
@@ -99,7 +109,7 @@ describe("assistant worker", () => {
         },
       ], {
         ASSISTANT_CHAT_MODEL: "test/model",
-        ASSISTANT_LLM_API_KEY: "test-key",
+        ASSISTANT_EVAL_LLM_API_KEY: "test-key",
         ASSISTANT_LLM_FETCH: async (_url, init) => {
           llmCalls.push(JSON.parse(String(init?.body)));
           return new Response(
@@ -153,7 +163,7 @@ describe("assistant worker", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           conversation_id: "conversation-1",
@@ -194,7 +204,7 @@ describe("assistant worker", () => {
         },
       ], {
         ASSISTANT_CHAT_MODEL: "test/model",
-        ASSISTANT_LLM_API_KEY: "test-key",
+        ASSISTANT_EVAL_LLM_API_KEY: "test-key",
         ASSISTANT_LLM_FETCH: async (_url, init) => {
           llmCalls.push(JSON.parse(String(init?.body)));
           return new Response(
@@ -234,7 +244,7 @@ describe("assistant worker", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           conversation_id: "retrieval-eval-1",
@@ -274,7 +284,7 @@ describe("assistant worker", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           message: "إيه معنى الطريق الداخلي؟",
@@ -297,7 +307,7 @@ describe("assistant worker", () => {
         },
       ], {
         ASSISTANT_CHAT_MODEL: "test/model",
-        ASSISTANT_LLM_API_KEY: "test-key",
+        ASSISTANT_EVAL_LLM_API_KEY: "test-key",
         ASSISTANT_LLM_FETCH: async () =>
           new Response(
             JSON.stringify({
@@ -347,7 +357,7 @@ describe("assistant worker", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-assistant-beta-token": "secret-token",
+          "x-assistant-eval-token": "secret-token",
         },
         body: JSON.stringify({
           message: "إيه معنى الطريق الداخلي؟",

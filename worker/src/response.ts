@@ -28,7 +28,7 @@ type FallbackReason =
 type FallbackMode = "search_only" | "sources_with_search";
 
 const MIN_HANDOFF_SOURCE_SCORE = 0.5;
-const DEFAULT_PUBLIC_SITE_URL = "https://madraset-elshamamsa.com";
+const DEFAULT_PUBLIC_SITE_URL = "https://example.com";
 
 function publicSiteUrl(value?: string): string {
   return (value?.trim() || DEFAULT_PUBLIC_SITE_URL).replace(/\/$/, "");
