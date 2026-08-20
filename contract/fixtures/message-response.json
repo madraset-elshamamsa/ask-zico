@@ -1,6 +1,8 @@
 {
   "message_id": "message-example",
   "conversation_id": "conversation-example",
+  "detected_language": "ar",
+  "answer_language": "ar",
   "answer": "ابدأ من المصدر التالي.",
   "citations": [
     {

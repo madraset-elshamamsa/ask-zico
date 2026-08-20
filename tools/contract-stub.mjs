@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDirectory = path.join(repositoryRoot, "contract", "fixtures");
-const contractVersion = "1.0.0";
+const contractVersion = "1.1.0";
 
 async function fixture(name) {
   return JSON.parse(await readFile(path.join(fixtureDirectory, name), "utf8"));

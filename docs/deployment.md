@@ -10,9 +10,12 @@ performs a Wrangler dry-run, but it does not hold production credentials or depl
    Cloudflare account. Keep the current compatibility date and `nodejs_compat` unless a
    reviewed change requires otherwise.
 3. Create KV, D1, Vectorize, Workers AI, and rate-limit bindings named exactly as shown.
-4. Review all SQL migrations, then apply them to the intended D1 database in order.
+4. Review all SQL migrations, then apply them to the intended D1 database in order. Apply
+   `0010_add_assistant_language_observability.sql` before deploying contract v1.1 code.
 5. Load a licensed corpus into your own KV/Vectorize resources.
 6. Add secrets with `wrangler secret put`; do not write secrets into either Wrangler file.
+   English queries require `ASSISTANT_GEMINI_API_KEY`. Configure the existing OpenRouter
+   key only if translation/provider fallback is desired.
 
 ## Verify and deploy
 
@@ -28,7 +31,8 @@ cd worker
 npx wrangler deploy --config wrangler.jsonc
 ```
 
-After deployment, check `/health`, confirm contract version `1.0.0`, then exercise the
+After deployment, check `/health`, confirm contract version `1.1.0`, then exercise Arabic,
+English, unsupported-language, and provider-fallback paths through the
 trusted application proxy with non-production test identities. A production deployment is
 not authorized merely by merging source changes; it requires the deployment approval used
 by the owning team.

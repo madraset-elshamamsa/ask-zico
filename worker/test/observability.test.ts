@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import app from "../src/index";
-import { cleanupExpiredAssistantAnswerPreviews } from "../src/observability";
+import { cleanupExpiredAssistantAnswerPreviews, storeAssistantQueryEvent } from "../src/observability";
 import type { Env, StoredChunk } from "../src/types";
 
 type RecordedQuery = {
@@ -66,6 +66,102 @@ const chunk: StoredChunk = {
 };
 
 describe("assistant observability", () => {
+  test("stores language metadata without storing a second translated-query copy", async () => {
+    const env = createEnv([]);
+    const originalQuery = "What is the inner path?";
+    const translatedRetrievalQuery = "ما هو الطريق الداخلي؟";
+    const normalizedRetrievalQuery = "ما هو الطريق الداخلي";
+
+    await expect(storeAssistantQueryEvent(env, {
+      request: { message: originalQuery, locale: "en", session_id: "session-language" },
+      response: {
+        message_id: "message-language",
+        answer: "The inner path begins in the heart.",
+        citations: [],
+        suggested_actions: [],
+        confidence: "low",
+        detected_language: "en",
+        answer_language: "en",
+        retrieved_chunks: [],
+      },
+      normalizedQuery: normalizedRetrievalQuery,
+      chunks: [],
+      startedAt: Date.now(),
+      translation: { status: "translated", provider: "gemini", latency_ms: 42 },
+    })).resolves.toBe("ok");
+
+    const insert = env.__TEST_RECORDED_QUERIES.find((item) =>
+      item.query.includes("INSERT INTO assistant_query_events"),
+    );
+    expect(insert?.query).toContain("ui_locale, detected_language, answer_language, translation_status, translation_latency_ms");
+    expect(insert?.query).not.toContain("retrieval_query");
+    expect(insert?.values.slice(7, 15)).toEqual([
+      "en", "en", "en", "en", "translated", 42, originalQuery, normalizedRetrievalQuery,
+    ]);
+    expect(insert?.values).not.toContain(translatedRetrievalQuery);
+  });
+
+  test("includes translation provider attempts in existing provider observability", async () => {
+    const env = createEnv([]);
+    await storeAssistantQueryEvent(env, {
+      request: { message: "What is the inner path?", locale: "en" },
+      response: {
+        message_id: "message-translation-attempt",
+        answer: "",
+        citations: [],
+        suggested_actions: [],
+        confidence: "low",
+        detected_language: "en",
+        answer_language: "ar",
+        retrieved_chunks: [],
+      },
+      normalizedQuery: "",
+      chunks: [],
+      startedAt: Date.now(),
+      translation: {
+        status: "failed",
+        provider: "openrouter",
+        latency_ms: 12,
+        provider_attempts: [
+          { provider: "gemini", model: "gemini-test", ok: false, reason: "llm_http_error", status: 503, operation: "translation" },
+          { provider: "openrouter", model: "router-test", ok: false, reason: "llm_http_error", status: 503, operation: "translation" },
+        ],
+      },
+    });
+    const insert = env.__TEST_RECORDED_QUERIES.find((item) => item.query.includes("INSERT INTO assistant_query_events"));
+    const attempts = insert?.values.find((value) => typeof value === "string" && value.includes('"operation":"translation"'));
+    expect(JSON.parse(String(attempts))).toHaveLength(2);
+  });
+
+  test("adds translation cost to grounded-answer cost", async () => {
+    const env = createEnv([]);
+    await storeAssistantQueryEvent(env, {
+      request: { message: "What is the inner path?", locale: "en" },
+      response: {
+        message_id: "message-combined-cost",
+        answer: "The inner path begins in the heart.",
+        citations: [],
+        suggested_actions: [],
+        confidence: "high",
+        detected_language: "en",
+        answer_language: "en",
+        retrieved_chunks: [],
+        debug: {
+          query: "What is the inner path?",
+          normalized_query: "ما هو الطريق الداخلي",
+          retrieval_mode: "controlled_hybrid",
+          answer: { mode: "grounded", estimated_model_cost_usd: 0.002 },
+        },
+      },
+      normalizedQuery: "ما هو الطريق الداخلي",
+      chunks: [],
+      startedAt: Date.now(),
+      translation: { status: "translated", provider: "gemini", latency_ms: 10, estimated_model_cost_usd: 0.001 },
+    });
+    const insert = env.__TEST_RECORDED_QUERIES.find((item) => item.query.includes("INSERT INTO assistant_query_events"));
+    expect(insert?.values[32]).toBeCloseTo(0.003);
+  });
+
   test("logs grounded message events with query, user, source metadata, and booleans", async () => {
     const env = createEnv([chunk], {
       ASSISTANT_CHAT_MODEL: "test/model",
@@ -154,7 +250,7 @@ describe("assistant observability", () => {
               {
                 message: {
                   content: JSON.stringify({
-                    answer: "The internal path starts from the heart.",
+                    answer: "الطريق الداخلي يبدأ من القلب.",
                     confidence: "high",
                     cited_chunk_ids: ["wa3zat:ElTariqElDa5ely:0"],
                   }),
@@ -175,7 +271,7 @@ describe("assistant observability", () => {
         },
         body: JSON.stringify({
           session_id: "session-provider",
-          message: "provider observability",
+          message: "الطريق الداخلي",
           normalized_query: chunk.search_text,
         }),
       },
@@ -250,14 +346,14 @@ describe("assistant observability", () => {
       {
         doc_id: "wa3zat:InternalPath",
         chunk_id: "wa3zat:InternalPath:0",
-        title: "Internal Path",
+        title: "الطريق الداخلي",
         url: "https://madraset-elshamamsa.com/articles/wa3zat/InternalPath.php",
-        text: "The internal path starts when a person examines the heart before blaming circumstances.",
-        search_text: "internal path heart example",
+        text: "يبدأ الطريق الداخلي عندما يفحص الإنسان قلبه قبل أن يلوم الظروف.",
+        search_text: "الطريق الداخلي القلب مثال",
         content_type: "article",
-        library: "Wa3zat",
-        section: "Example",
-        language: "en",
+        library: "عظات",
+        section: "مثال",
+        language: "ar",
       },
     ], {
       ASSISTANT_CHAT_MODEL: "test/model",
@@ -269,7 +365,7 @@ describe("assistant observability", () => {
               {
                 message: {
                   content: JSON.stringify({
-                    answer: "A simple example is examining the heart before blaming circumstances.",
+                    answer: "مثال بسيط هو فحص القلب قبل لوم الظروف.",
                     confidence: "high",
                     cited_chunk_ids: ["wa3zat:InternalPath:0"],
                   }),
@@ -291,14 +387,14 @@ describe("assistant observability", () => {
         body: JSON.stringify({
           session_id: "session-follow-up",
           conversation_id: "conversation-1",
-          message: "Can you give an example?",
+          message: "ممكن تديني مثال؟",
           follow_up: {
             parent_message_id: "message-parent",
-            previous_user_message: "What is the internal path?",
-            previous_assistant_answer: "The internal path starts from the heart.",
+            previous_user_message: "ما هو الطريق الداخلي؟",
+            previous_assistant_answer: "الطريق الداخلي يبدأ من القلب.",
             previous_cited_chunk_ids: ["wa3zat:InternalPath:0"],
           },
-          locale: "en",
+          locale: "ar",
         }),
       },
       env,
@@ -435,7 +531,7 @@ describe("assistant observability", () => {
       ASSISTANT_LLM_FETCH: async () =>
         new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify({
-            answer: "Supported answer.",
+            answer: "إجابة مدعومة.",
             confidence: "high",
             cited_chunk_ids: ["wa3zat:ElTariqElDa5ely:0"],
           }) } }],
@@ -452,7 +548,7 @@ describe("assistant observability", () => {
         },
         body: JSON.stringify({
           session_id: "session-cpu",
-          message: "internal path",
+          message: "الطريق الداخلي",
         }),
       },
       env,

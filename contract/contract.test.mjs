@@ -24,8 +24,8 @@ const fixtures = [
   ["ErrorResponse", "error-response.json"],
 ];
 
-test("OpenAPI contract exposes the stable v1 integration endpoints", () => {
-  assert.equal(spec.info.version, "1.0.0");
+test("OpenAPI contract exposes the stable v1.1 multilingual integration endpoints", () => {
+  assert.equal(spec.info.version, "1.1.0");
   assert.deepEqual(Object.keys(spec.paths).sort(), [
     "/api/assistant/feedback",
     "/api/assistant/message",
@@ -35,6 +35,22 @@ test("OpenAPI contract exposes the stable v1 integration endpoints", () => {
   assert.equal(
     spec.components.schemas.AssistantMessageRequest.properties.page_context.$ref,
     "#/components/schemas/PageContext",
+  );
+  assert.deepEqual(
+    spec.components.schemas.AssistantMessageResponse.required.includes("detected_language"),
+    true,
+  );
+  assert.deepEqual(
+    spec.components.schemas.AssistantMessageResponse.required.includes("answer_language"),
+    true,
+  );
+  assert.deepEqual(
+    spec.components.schemas.AssistantMessageResponse.properties.detected_language.enum,
+    ["ar", "en", "unsupported"],
+  );
+  assert.deepEqual(
+    spec.components.schemas.AssistantMessageResponse.properties.answer_language.enum,
+    ["ar", "en"],
   );
 });
 
@@ -69,6 +85,6 @@ test("contract stub enforces the proxy token and returns v1 fixtures", async () 
     },
   ));
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("x-ask-zico-contract-version"), "1.0.0");
+  assert.equal(response.headers.get("x-ask-zico-contract-version"), "1.1.0");
   assert.equal((await response.json()).conversation_id, "contract-test");
 });

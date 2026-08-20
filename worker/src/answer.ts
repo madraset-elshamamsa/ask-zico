@@ -1,5 +1,6 @@
 import { buildAnswerContext, parseAnswerContextOptions } from "./answer-context";
 import { estimateModelCostUsd } from "./economics";
+import { isMeaningfullyArabic, isMeaningfullyEnglish } from "./language";
 import { reserveGeminiModelQuota, reserveOpenRouterQuota } from "./model-quota";
 import type { AnswerContext } from "./answer-context";
 import type {
@@ -11,6 +12,7 @@ import type {
   RetrievedChunk,
   AssistantFollowUpContext,
   AssistantLlmFetch,
+  SupportedLanguage,
 } from "./types";
 
 const DEFAULT_LLM_BASE_URL = "https://openrouter.ai/api/v1";
@@ -86,11 +88,14 @@ const INCOMPLETE_ANSWER_ENDINGS = new Set([
 const INCOMPLETE_ANSWER_TRAILING_PATTERN = /(?:[,;:،؛:]|\.\.\.|…|\-)$/;
 const HANDOFF_MESSAGE =
   "مش لاقي في المصادر المتاحة إجابة مؤكدة على السؤال ده. الأفضل تراجع صفحة المصدر أو تسأل خادم مختص عشان المعلومة تكون دقيقة.";
+const ENGLISH_HANDOFF_MESSAGE =
+  "I couldn't find a confirmed answer in the available sources. Please review the source page or ask a knowledgeable servant so the information stays accurate.";
 
 type GroundedAnswerInput = {
   query: string;
   chunks: RetrievedChunk[];
   followUp?: AssistantFollowUpContext;
+  answerLanguage?: SupportedLanguage;
 };
 
 type ModelAnswerStatus = "ANSWERED" | "NOT_FOUND_IN_BATCH";
@@ -236,6 +241,18 @@ export async function createGroundedAnswer(
         return failure("incomplete_answer", undefined, totalAttempts, progressive ? batchAttempts : undefined);
       }
 
+      const languageMatches = input.answerLanguage === undefined
+        || (input.answerLanguage === "en"
+          ? isMeaningfullyEnglish(answer.answer)
+          : isMeaningfullyArabic(answer.answer));
+      if (!languageMatches) {
+        if (attempt < MAX_MODEL_ATTEMPTS) {
+          retryReason = "wrong_answer_language";
+          continue;
+        }
+        return failure("wrong_answer_language", undefined, totalAttempts, progressive ? batchAttempts : undefined);
+      }
+
       return {
         ok: true,
         answer,
@@ -262,9 +279,9 @@ export async function createGroundedAnswer(
   );
 }
 
-export function createHandoffAnswer(): ValidatedGroundedAnswer {
+export function createHandoffAnswer(answerLanguage: SupportedLanguage = "ar"): ValidatedGroundedAnswer {
   return {
-    answer: HANDOFF_MESSAGE,
+    answer: answerLanguage === "en" ? ENGLISH_HANDOFF_MESSAGE : HANDOFF_MESSAGE,
     citations: [],
     cited_chunk_ids: [],
     confidence: "low",
@@ -691,7 +708,7 @@ function createGeminiGenerateContentRequest(
     systemInstruction: {
       parts: [
         {
-          text: createSystemPrompt(retryReason, answerContext.compact),
+          text: createSystemPrompt(retryReason, answerContext.compact, input.answerLanguage),
         },
       ],
     },
@@ -859,7 +876,7 @@ function createChatCompletionRequest(
     messages: [
       {
         role: "system",
-        content: createSystemPrompt(retryReason, answerContext.compact),
+        content: createSystemPrompt(retryReason, answerContext.compact, input.answerLanguage),
       },
       {
         role: "user",
@@ -912,13 +929,13 @@ function createChatCompletionRequest(
   return request;
 }
 
-function createSystemPrompt(retryReason: AssistantAnswerFailureReason | null, compactContext = false): string {
+function createSystemPrompt(retryReason: AssistantAnswerFailureReason | null, compactContext = false, answerLanguage: SupportedLanguage = "ar"): string {
   const lines = [
     "You are Ask Zico, a citation-bound assistant for the configured knowledge library.",
     "Answer only from the provided chunks. If the chunks do not explicitly support the answer, return status NOT_FOUND_IN_BATCH, an empty answer, low confidence, and no cited_chunk_ids.",
     "For religious and liturgical questions about rites, fast dates, hymn timing, sacramental details, or church practice, refusal is better than speculation unless the provided chunks explicitly answer the question.",
     "Preserve Coptic terms, hymn titles, and transliterated text exactly as they appear in the source.",
-    "Voice and tone contract: answer in Egyptian Arabic, friendly and respectful, concise and conversational, not overly formal MSA unless quoting sources, and do not invent slang.",
+    answerLanguage === "en" ? "Answer in clear English. Preserve Arabic source terms, Coptic terms, hymn titles, names, and quoted terms exactly." : "Voice and tone contract: answer in Egyptian Arabic, friendly and respectful, concise and conversational, not overly formal MSA unless quoting sources, and do not invent slang.",
     "The answer field may use a constrained Markdown subset: paragraphs, bullet lists, and bold text only.",
     "Do not include raw HTML, tables, headings, images, or source links in the answer field.",
     "When retrieved chunks conflict or cover nearby but different events, prefer chunks whose title or section best matches the user's requested topic.",
@@ -942,6 +959,9 @@ function createSystemPrompt(retryReason: AssistantAnswerFailureReason | null, co
     lines.push(
       "Previous answer was incomplete or cut off. Return a complete concise answer with a finished final sentence.",
     );
+  }
+  if (retryReason === "wrong_answer_language") {
+    lines.push("Your previous answer used the wrong output language. Return the answer field only in the explicitly required answer language while preserving quoted/source terms exactly.");
   }
 
   return lines.join("\n");

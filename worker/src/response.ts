@@ -1,4 +1,4 @@
-import type { AssistantAnswerDebug, AssistantMessageResponse, AssistantQuotaMetadata, RetrievedChunk } from "./types";
+import type { AssistantAnswerDebug, AssistantMessageResponse, AssistantQuotaMetadata, AssistantTranslationDebug, DetectedLanguage, RetrievedChunk, SupportedLanguage } from "./types";
 import type { ValidatedGroundedAnswer } from "./answer";
 
 type RetrievalOnlyResponseInput = {
@@ -9,6 +9,9 @@ type RetrievalOnlyResponseInput = {
   chunks: RetrievedChunk[];
   answerDebug?: AssistantAnswerDebug;
   includeFullRetrievedChunks?: boolean;
+  detectedLanguage?: DetectedLanguage;
+  answerLanguage?: SupportedLanguage;
+  translationDebug?: AssistantTranslationDebug;
 };
 
 type FallbackReason =
@@ -58,6 +61,8 @@ export function createRetrievalOnlyResponse(
       url: chunk.url,
     })),
     confidence: "retrieval_only",
+    detected_language: input.detectedLanguage ?? "ar",
+    answer_language: input.answerLanguage ?? "ar",
     retrieved_chunks: responseChunks(input.chunks, input.includeFullRetrievedChunks === true),
     quota: input.quota,
     debug: {
@@ -65,6 +70,7 @@ export function createRetrievalOnlyResponse(
       normalized_query: input.normalizedQuery,
       retrieval_mode: "controlled_hybrid",
       answer: input.answerDebug,
+      translation: input.translationDebug,
     },
   };
 }
@@ -86,7 +92,7 @@ export function createFallbackAnswerResponse(
   return {
     message_id: crypto.randomUUID(),
     conversation_id: input.conversationId,
-    answer: fallbackMessage(input.fallbackReason, fallbackMode),
+    answer: fallbackMessage(input.fallbackReason, fallbackMode, input.answerLanguage ?? "ar"),
     citations: includeSources
       ? input.chunks.map((chunk) => ({
         title: chunk.title,
@@ -98,11 +104,13 @@ export function createFallbackAnswerResponse(
       ...sourceActions,
       {
         type: "navigate_to_url" as const,
-        label: "بحث في الموقع",
+        label: input.answerLanguage === "en" ? "Search the site" : "بحث في الموقع",
         url: `${publicSiteUrl(input.siteUrl)}/search.php`,
       },
     ]),
     confidence: "retrieval_only",
+    detected_language: input.detectedLanguage ?? "ar",
+    answer_language: input.answerLanguage ?? "ar",
     retrieved_chunks: responseChunks(input.chunks, input.includeFullRetrievedChunks === true),
     quota: input.quota,
     debug: {
@@ -113,6 +121,7 @@ export function createFallbackAnswerResponse(
         mode: "fallback",
         reason: input.fallbackReason,
       },
+      translation: input.translationDebug,
     },
   };
 }
@@ -145,6 +154,8 @@ export function createGroundedAnswerResponse(
       url: chunk.url,
     })),
     confidence: input.groundedAnswer.confidence,
+    detected_language: input.detectedLanguage ?? "ar",
+    answer_language: input.answerLanguage ?? "ar",
     retrieved_chunks: responseChunks(input.chunks, input.includeFullRetrievedChunks === true),
     quota: input.quota,
     debug: {
@@ -152,6 +163,7 @@ export function createGroundedAnswerResponse(
       normalized_query: input.normalizedQuery,
       retrieval_mode: "controlled_hybrid",
       answer: input.answerDebug,
+      translation: input.translationDebug,
     },
   };
 }
@@ -188,7 +200,19 @@ function responseChunks(
   }));
 }
 
-function fallbackMessage(reason: FallbackReason, fallbackMode: FallbackMode): string {
+function fallbackMessage(reason: FallbackReason, fallbackMode: FallbackMode, answerLanguage: SupportedLanguage): string {
+  if (answerLanguage === "en") {
+    if (fallbackMode === "search_only") {
+      if (reason === "fallback_only_mode" || reason === "model_provider_error" || reason === "retrieval_error" || reason === "quota_identity_unavailable" || reason === "quota_storage_unavailable") {
+        return "Questions are unavailable right now. You can use site search until the service is back.";
+      }
+      return "You've reached today's question limit. You can continue with site search.";
+    }
+    if (reason === "fallback_only_mode" || reason === "model_provider_error" || reason === "retrieval_error" || reason === "quota_identity_unavailable" || reason === "quota_storage_unavailable") {
+      return "The smart answer is unavailable right now, but these are the closest sources that may help.";
+    }
+    return "You've reached today's smart answer limit, but these are the closest sources that may help.";
+  }
   if (fallbackMode === "search_only") {
     if (reason === "fallback_only_mode" || reason === "model_provider_error" || reason === "retrieval_error" || reason === "quota_identity_unavailable" || reason === "quota_storage_unavailable") {
       return "الأسئلة مش متاحة دلوقتي. تقدر تستخدم بحث الموقع لحد ما ترجع الخدمة.";

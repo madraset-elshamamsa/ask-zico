@@ -53,7 +53,7 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<Env> = {}) {
             {
               message: {
                 content: JSON.stringify({
-                  answer: "Supported answer.",
+                  answer: "إجابة مدعومة.",
                   confidence: "high",
                   cited_chunk_ids: ["wa3zat:InternalPath:0"],
                 }),
@@ -74,14 +74,14 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<Env> = {}) {
 const chunk: StoredChunk = {
   doc_id: "wa3zat:InternalPath",
   chunk_id: "wa3zat:InternalPath:0",
-  title: "Internal Path",
+  title: "الطريق الداخلي",
   url: "https://madraset-elshamamsa.com/articles/wa3zat/InternalPath.php",
-  text: "The internal path starts in the heart.",
-  search_text: "internal path heart",
+  text: "الطريق الداخلي يبدأ من القلب ويستمر بالتوبة مع الله.",
+  search_text: "الطريق الداخلي القلب التوبة",
   content_type: "article",
-  library: "Wa3zat",
-  section: "Content",
-  language: "en",
+  library: "عظات",
+  section: "المحتوى",
+  language: "ar",
 };
 
 describe("assistant worker economics gate", () => {
@@ -99,7 +99,7 @@ describe("assistant worker economics gate", () => {
           actor_id: "actor-1",
           network_id: "network-1",
           session_id: "session-1",
-          message: "internal path",
+          message: "الطريق الداخلي",
         }),
       },
       env,
@@ -133,7 +133,7 @@ describe("assistant worker economics gate", () => {
           actor_id: "actor-1",
           network_id: "network-1",
           session_id: "session-1",
-          message: "internal path",
+          message: "الطريق الداخلي",
         }),
       },
       env,
@@ -197,7 +197,7 @@ describe("assistant worker economics gate", () => {
           actor_id: "actor-1",
           network_id: "network-1",
           session_id: "session-1",
-          message: "internal path",
+          message: "الطريق الداخلي",
         }),
       },
       env,
@@ -236,7 +236,7 @@ describe("assistant worker economics gate", () => {
           actor_id: "actor-1",
           network_id: "network-1",
           session_id: "session-1",
-          message: "internal path",
+          message: "الطريق الداخلي",
         }),
       },
       env,
@@ -272,7 +272,7 @@ describe("assistant worker economics gate", () => {
         body: JSON.stringify({
           actor_id: "actor-1",
           network_id: "network-1",
-          message: "internal path",
+          message: "الطريق الداخلي",
         }),
       },
       env,
@@ -305,7 +305,7 @@ describe("assistant worker economics gate", () => {
                     {
                       text: JSON.stringify({
                         status: "ANSWERED",
-                        answer: "Supported answer.",
+                        answer: "إجابة مدعومة.",
                         confidence: "high",
                         cited_chunk_ids: ["wa3zat:InternalPath:0"],
                       }),
@@ -331,7 +331,7 @@ describe("assistant worker economics gate", () => {
           actor_id: "actor-1",
           network_id: "network-1",
           session_id: "session-1",
-          message: "internal path",
+          message: "الطريق الداخلي",
         }),
       },
       env,
