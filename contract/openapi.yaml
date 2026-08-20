@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Ask Zico Worker API
-  version: 1.0.0
+  version: 1.1.0
   license:
     name: MIT
     identifier: MIT
@@ -101,7 +101,7 @@ components:
   headers:
     ContractVersion:
       description: Semantic version of the response contract
-      schema: { type: string, const: 1.0.0 }
+      schema: { type: string, const: 1.1.0 }
   securitySchemes:
     proxyToken:
       type: apiKey
@@ -148,7 +148,7 @@ components:
       properties:
         ok: { type: boolean, const: true }
         service: { type: string, const: ask-zico }
-        contract_version: { type: string, const: 1.0.0 }
+        contract_version: { type: string, const: 1.1.0 }
     PageContext:
       type: object
       additionalProperties: false
@@ -181,7 +181,11 @@ components:
         network_id: { $ref: '#/components/schemas/NonEmptyString' }
         actor_type: { type: string, enum: [anonymous, authenticated] }
         challenge_verified: { type: boolean }
-        locale: { type: string, default: ar }
+        locale:
+          type: string
+          enum: [ar, en]
+          default: ar
+          description: UI locale only; the answer language follows the message language.
         page_context: { $ref: '#/components/schemas/PageContext' }
         follow_up: { $ref: '#/components/schemas/FollowUpContext' }
         normalized_query: { type: string, description: Evaluation callers only. }
@@ -243,7 +247,7 @@ components:
     AssistantMessageResponse:
       type: object
       additionalProperties: false
-      required: [message_id, answer, citations, suggested_actions, confidence, retrieved_chunks]
+      required: [message_id, answer, citations, suggested_actions, confidence, detected_language, answer_language, retrieved_chunks]
       properties:
         message_id: { type: string }
         conversation_id: { type: string }
@@ -251,6 +255,8 @@ components:
         citations: { type: array, items: { $ref: '#/components/schemas/Citation' } }
         suggested_actions: { type: array, items: { $ref: '#/components/schemas/SuggestedAction' } }
         confidence: { type: string, enum: [retrieval_only, low, medium, high] }
+        detected_language: { type: string, enum: [ar, en, unsupported] }
+        answer_language: { type: string, enum: [ar, en] }
         trace_id: { type: string }
         retrieved_chunks: { type: array, items: { $ref: '#/components/schemas/RetrievedChunk' } }
         quota: { $ref: '#/components/schemas/QuotaMetadata' }
@@ -300,3 +306,7 @@ components:
       properties:
         error: { type: string }
         challenge: { type: boolean }
+        message: { type: string }
+        detected_language: { type: string, enum: [ar, en, unsupported] }
+        answer_language: { type: string, enum: [ar, en] }
+        debug: { type: object, additionalProperties: true }

@@ -15,7 +15,7 @@ npm run stub:contract
 ```
 
 The stub listens on `127.0.0.1:8790` by default. Point the application proxy at that URL
-and use the same local token. It returns stable v1 fixtures without Cloudflare, D1, KV,
+and use the same local token. It returns stable v1.1 fixtures without Cloudflare, D1, KV,
 Vectorize, a corpus, or model-provider credentials.
 
 ## Proxy responsibilities
@@ -24,14 +24,22 @@ Vectorize, a corpus, or model-provider credentials.
 - Accept only same-site requests using the consumer's existing session/CSRF controls.
 - Derive opaque `actor_id` and `network_id` values; do not send raw IP addresses or email
   addresses to Ask Zico.
-- Forward message, quota-status, and feedback payloads from the v1 contract.
+- Forward message, quota-status, and feedback payloads from the v1.1 contract. Accept only
+  `ar` or `en` for the UI `locale`; never accept or forward a caller-supplied retrieval query.
 - Set timeouts, preserve safe upstream status codes, and return a conservative local error
   when the Worker is unavailable.
-- Verify `x-ask-zico-contract-version: 1.0.0` during health checks and integration tests.
+- Verify `x-ask-zico-contract-version: 1.1.0` during health checks and integration tests.
 
 `examples/php-proxy/ask-zico-proxy.php` shows the minimal transport boundary. Production
 consumers must add their own authentication, request validation, rate limiting, structured
 logging, and error mapping around it.
+
+The consuming website owns first-paint locale selection, its saved AR/EN switcher choice,
+and localized browser copy. `examples/web-client/` demonstrates `navigator.languages`,
+`localStorage`, accessible pressed-state controls, and document `lang`/`dir` updates. It
+also demonstrates the source-card invariant: Arabic titles, snippets, and original URLs are
+shown unchanged in both interface locales. The Worker answer follows each message language,
+not the browser locale.
 
 ## Upgrade procedure
 

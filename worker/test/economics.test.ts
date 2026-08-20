@@ -94,6 +94,26 @@ function createEnv(overrides: Partial<Env> = {}) {
 }
 
 describe("assistant economics", () => {
+  test("counts translation provider attempts without adding another user quota attempt or retrieval", async () => {
+    const env = createEnv();
+    const input = {
+      responseKind: "fallback" as const,
+      quotaConsumed: false,
+      modelCalls: 2,
+      retrievalPerformed: false,
+      estimatedUsd: 0.001,
+      now: new Date("2026-07-26T10:00:00.000Z"),
+    } as Parameters<typeof recordAssistantUsage>[1];
+    await recordAssistantUsage(env, input);
+    const insert = env.queries.find((item) =>
+      item.query.includes("INSERT INTO assistant_usage_counters") && item.values[0] === "day" && item.values[2] === "global",
+    );
+    expect(insert?.values[4]).toBe(2);
+    expect(insert?.values[5]).toBe(0);
+    expect(insert?.values[7]).toBe(0);
+    expect(insert?.values[8]).toBe(0);
+    expect(insert?.values[12]).toBe(0.001);
+  });
   test("does not gate model calls when quota configuration is absent", async () => {
     const env = createEnv({
       ASSISTANT_DEVICE_DAILY_MODEL_LIMIT: undefined,

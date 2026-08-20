@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { normalizeArabicForSearch } from "./arabic";
+import { detectMessageLanguage, hasSubstantiveEnglish, translateEnglishRetrievalQuery } from "./language";
 import { createGroundedAnswer, createHandoffAnswer } from "./answer";
 import {
   checkAssistantEconomicsGate,
@@ -31,10 +32,10 @@ import {
   createGroundedAnswerResponse,
   createRetrievalOnlyResponse,
 } from "./response";
-import type { AssistantMessageRequest, AssistantMessageResponse, AssistantWorkerCpuTiming, AssistantWorkerProfileTiming, Env, RetrievedChunk } from "./types";
+import type { AssistantMessageRequest, AssistantMessageResponse, AssistantTranslationDebug, AssistantTranslationMetadata, AssistantWorkerCpuTiming, AssistantWorkerProfileTiming, DetectedLanguage, Env, RetrievedChunk } from "./types";
 
 const WORKER_CPU_BUDGET_MS = 8;
-const CONTRACT_VERSION = "1.0.0";
+const CONTRACT_VERSION = "1.1.0";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -134,36 +135,131 @@ app.post("/api/assistant/message", async (c) => {
     }
   }
 
-  const retrievalQuery = request.retrieval_query ?? buildRetrievalQuery(request);
-  const normalizedQuery = request.normalized_query ?? cpu.measure("normalization_routing", () => normalizeArabicForSearch(retrievalQuery));
+  const detectedLanguage = detectMessageLanguage(request.message);
+  const answerLanguage = detectedLanguage === "en" ? "en" : "ar";
+  if (detectedLanguage === "unsupported") {
+    const translationMetadata: AssistantTranslationMetadata = {
+      status: "not_needed",
+      latency_ms: 0,
+      provider_attempts: [],
+      model_calls: 0,
+      estimated_model_cost_usd: 0,
+    };
+    const message = "من فضلك جرّب تسأل بالعربي أو بالإنجليزي.";
+    const internalResponse = createLanguageFailureEventResponse(
+      request,
+      "unsupported",
+      "ar",
+      message,
+      access.role === "eval" ? { ...translationMetadata } : undefined,
+    );
+    await scheduleAssistantQueryEvent(c, {
+      request,
+      response: internalResponse,
+      normalizedQuery: "",
+      chunks: [],
+      startedAt,
+      workerCpu: snapshotCpu(cpu),
+      translation: translationMetadata,
+    });
+    return c.json({
+      error: "unsupported_language",
+      message,
+      detected_language: "unsupported" as const,
+      answer_language: "ar" as const,
+      ...(access.role === "eval" ? { debug: internalResponse.debug } : {}),
+    }, 400);
+  }
 
-  if (!request.retrieval_only) {
-    const quotaPreflight = await inspectAssistantQuota(c.env, {
+  if (access.role === "eval" || !request.retrieval_only) {
+    const reservation = await reserveAssistantQuota(c.env, {
       role: access.role,
       actorId: request.actor_id,
       networkId: request.network_id,
     });
-    if (
-      quotaPreflight.action === "fallback" &&
-      (quotaPreflight.reason === "quota_storage_unavailable" ||
-        quotaPreflight.reason === "quota_identity_unavailable")
-    ) {
+    if (reservation.action === "fallback") {
+      const fallbackMode = quotaFallbackMode(c.env);
+      const quotaStatus = await inspectAssistantQuota(c.env, {
+        role: access.role,
+        actorId: request.actor_id,
+        networkId: request.network_id,
+      });
+      const fallbackNormalizedQuery = normalizeArabicForSearch(request.message);
+      const fallbackChunks = detectedLanguage === "ar" && fallbackMode === "sources_with_search"
+        ? await retrieveChunks(c.env, fallbackNormalizedQuery, cpu)
+        : [];
       const response = createFallbackAnswerResponse({
         conversationId: request.conversation_id,
         query: request.message,
-        normalizedQuery,
-        chunks: [],
-        fallbackReason: quotaPreflight.reason,
-        fallbackMode: quotaFallbackMode(c.env),
+        normalizedQuery: fallbackNormalizedQuery,
+        chunks: fallbackChunks,
+        fallbackReason: reservation.reason,
+        fallbackMode,
         siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
-        quota: quotaPreflight.quota,
-        includeFullRetrievedChunks: request.debug === true,
+        quota: quotaStatus.quota,
+        detectedLanguage,
+        answerLanguage,
       });
       finalizeResponseCpu(response, cpu);
       return c.json(response);
     }
   }
 
+  const sourceQuery = request.retrieval_query ?? buildRetrievalQuery(request);
+  const needsTranslation = needsEnglishRetrievalTranslation(request, detectedLanguage);
+  const translated = needsTranslation ? await translateEnglishRetrievalQuery(sourceQuery, modelEnvForCaller(c.env, access.role)) : null;
+  const translationMetadata: AssistantTranslationMetadata = translated
+    ? {
+      status: translated.ok ? "translated" : translated.status,
+      provider: translated.provider,
+      latency_ms: translated.latencyMs,
+      provider_attempts: translated.providerAttempts,
+      model_calls: translated.modelCalls,
+      estimated_model_cost_usd: translated.estimatedModelCostUsd,
+    }
+    : {
+      status: "not_needed",
+      latency_ms: 0,
+      provider_attempts: [],
+      model_calls: 0,
+      estimated_model_cost_usd: 0,
+    };
+  const translationDebug: AssistantTranslationDebug | undefined = access.role === "eval" && translated
+    ? { ...translationMetadata, ...(translated.ok ? { retrieval_query: translated.query } : {}) }
+    : undefined;
+  if (translated && !translated.ok) {
+    const message = translationFailureMessage(answerLanguage);
+    const internalResponse = createLanguageFailureEventResponse(request, detectedLanguage, answerLanguage, message, translationDebug);
+    await scheduleAssistantQueryEvent(c, {
+      request,
+      response: internalResponse,
+      normalizedQuery: "",
+      chunks: [],
+      startedAt,
+      workerCpu: snapshotCpu(cpu),
+      translation: translationMetadata,
+    });
+    await scheduleAssistantUsage(c, {
+      request,
+      responseKind: "fallback",
+      quotaConsumed: false,
+      estimatedUsd: 0,
+      translation: translationMetadata,
+      retrievalPerformed: false,
+    });
+    return c.json({
+      error: "translation_unavailable",
+      message,
+      detected_language: detectedLanguage,
+      answer_language: answerLanguage,
+      ...(translationDebug ? { debug: internalResponse.debug } : {}),
+    }, 503);
+  }
+  const retrievalQuery = translated?.ok ? translated.query : sourceQuery;
+  const normalizedQuery = request.normalized_query ?? cpu.measure("normalization_routing", () => normalizeArabicForSearch(retrievalQuery));
+  const responseNormalizedQuery = access.role === "eval"
+    ? normalizedQuery
+    : normalizeArabicForSearch(request.message);
   const retrievedChunks = await retrieveChunks(c.env, normalizedQuery, cpu);
   const chunks = request.follow_up
     ? mergeChunks(
@@ -175,79 +271,12 @@ app.post("/api/assistant/message", async (c) => {
     const response = cpu.measure("response_build", () => createRetrievalOnlyResponse({
       conversationId: request.conversation_id,
       query: request.message,
-      normalizedQuery,
+      normalizedQuery: responseNormalizedQuery,
       chunks,
       includeFullRetrievedChunks: request.debug === true,
-    }));
-    finalizeResponseCpu(response, cpu);
-
-    return c.json(response);
-  }
-
-  const economicsGate = await checkAssistantEconomicsGate(c.env, {
-    deviceId: request.actor_id ?? request.assistant_device_id,
-    sessionId: request.session_id,
-    userId: request.user_id,
-  });
-  if (economicsGate.action === "fallback") {
-    const response = createFallbackAnswerResponse({
-      conversationId: request.conversation_id,
-      query: request.message,
-      normalizedQuery,
-      chunks,
-      fallbackReason: economicsGate.reason,
-      fallbackMode: quotaFallbackMode(c.env),
-      siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
-      quota: economicsGate.quota,
-      includeFullRetrievedChunks: request.debug === true,
-    });
-    finalizeResponseCpu(response, cpu);
-    return c.json(response);
-  }
-
-  const reservation = await reserveAssistantQuota(c.env, {
-    role: access.role,
-    actorId: request.actor_id,
-    networkId: request.network_id,
-  });
-  if (reservation.action === "fallback") {
-    const quotaStatus = await inspectAssistantQuota(c.env, {
-      role: access.role,
-      actorId: request.actor_id,
-      networkId: request.network_id,
-    });
-    const response = createFallbackAnswerResponse({
-      conversationId: request.conversation_id,
-      query: request.message,
-      normalizedQuery,
-      chunks,
-      fallbackReason: reservation.reason,
-      fallbackMode: quotaFallbackMode(c.env),
-      siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
-      quota: quotaStatus.quota,
-      includeFullRetrievedChunks: request.debug === true,
-    });
-    finalizeResponseCpu(response, cpu);
-    return c.json(response);
-  }
-
-  const answerResult = await createGroundedAnswer(modelEnvForCaller(c.env, access.role), {
-    query: request.message,
-    chunks,
-    followUp: request.follow_up,
-  });
-
-  if (!answerResult.ok && isProviderFailure(answerResult.debug)) {
-    const response = cpu.measure("response_build", () => createFallbackAnswerResponse({
-      conversationId: request.conversation_id,
-      query: request.message,
-      normalizedQuery,
-      chunks,
-      fallbackReason: "model_provider_error",
-      fallbackMode: quotaFallbackMode(c.env),
-        siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
-      quota: quotaAfterQuotaConsumption(undefined),
-      includeFullRetrievedChunks: request.debug === true,
+      detectedLanguage,
+      answerLanguage,
+      translationDebug,
     }));
     finalizeResponseCpu(response, cpu);
 
@@ -258,6 +287,97 @@ app.post("/api/assistant/message", async (c) => {
       chunks,
       startedAt,
       workerCpu: snapshotCpu(cpu),
+      translation: translationMetadata,
+    }));
+    finalizeResponseCpu(response, cpu);
+    await scheduleAssistantUsage(c, {
+      request,
+      responseKind: "retrieval_only",
+      quotaConsumed: false,
+      estimatedUsd: 0,
+      translation: translationMetadata,
+      retrievalPerformed: true,
+    });
+
+    return c.json(response);
+  }
+
+  const economicsGate = await checkAssistantEconomicsGate(c.env, {
+    deviceId: request.actor_id ?? request.assistant_device_id,
+    sessionId: request.session_id,
+    userId: request.user_id,
+  });
+
+  if (economicsGate.action === "fallback") {
+    const response = cpu.measure("response_build", () => createFallbackAnswerResponse({
+      conversationId: request.conversation_id,
+      query: request.message,
+      normalizedQuery: responseNormalizedQuery,
+      chunks,
+      fallbackReason: economicsGate.reason,
+      fallbackMode: quotaFallbackMode(c.env),
+      siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
+      quota: economicsGate.quota,
+      includeFullRetrievedChunks: request.debug === true,
+      detectedLanguage,
+      answerLanguage,
+      translationDebug,
+    }));
+    finalizeResponseCpu(response, cpu);
+
+    await cpu.measureAsync("observability_scheduling", () => scheduleAssistantQueryEvent(c, {
+      request,
+      response,
+      normalizedQuery,
+      chunks,
+      startedAt,
+      workerCpu: snapshotCpu(cpu),
+      translation: translationMetadata,
+    }));
+    finalizeResponseCpu(response, cpu);
+    await scheduleAssistantUsage(c, {
+      request,
+      responseKind: "fallback",
+      quotaConsumed: false,
+      estimatedUsd: 0,
+      translation: translationMetadata,
+    });
+
+    return c.json(response);
+  }
+
+  const answerResult = await createGroundedAnswer(modelEnvForCaller(c.env, access.role), {
+    query: request.message,
+    chunks,
+    followUp: request.follow_up,
+    answerLanguage,
+  });
+
+  if (!answerResult.ok && isProviderFailure(answerResult.debug)) {
+    const response = cpu.measure("response_build", () => createFallbackAnswerResponse({
+      conversationId: request.conversation_id,
+      query: request.message,
+      normalizedQuery: responseNormalizedQuery,
+      chunks,
+      fallbackReason: "model_provider_error",
+      fallbackMode: quotaFallbackMode(c.env),
+      siteUrl: c.env.ASSISTANT_PUBLIC_SITE_URL,
+      quota: quotaAfterQuotaConsumption(undefined),
+      includeFullRetrievedChunks: request.debug === true,
+      detectedLanguage,
+      answerLanguage,
+      translationDebug,
+    }));
+    finalizeResponseCpu(response, cpu);
+
+    await cpu.measureAsync("observability_scheduling", () => scheduleAssistantQueryEvent(c, {
+      request,
+      response,
+      normalizedQuery,
+      chunks,
+      startedAt,
+      workerCpu: snapshotCpu(cpu),
+      translation: translationMetadata,
     }));
     finalizeResponseCpu(response, cpu);
     await scheduleAssistantUsage(c, {
@@ -265,22 +385,26 @@ app.post("/api/assistant/message", async (c) => {
       responseKind: "fallback",
       quotaConsumed: true,
       estimatedUsd: undefined,
+      translation: translationMetadata,
     });
 
     return c.json(response);
   }
 
-  const groundedAnswer = answerResult.ok ? answerResult.answer : createHandoffAnswer();
+  const groundedAnswer = answerResult.ok ? answerResult.answer : createHandoffAnswer(answerLanguage);
 
   const response = cpu.measure("response_build", () => createGroundedAnswerResponse({
     conversationId: request.conversation_id,
     query: request.message,
-    normalizedQuery,
+    normalizedQuery: responseNormalizedQuery,
     chunks,
     groundedAnswer,
     answerDebug: answerResult.debug,
     quota: quotaAfterQuotaConsumption(undefined),
     includeFullRetrievedChunks: request.debug === true,
+    detectedLanguage,
+    answerLanguage,
+    translationDebug,
   }));
   finalizeResponseCpu(response, cpu);
 
@@ -291,6 +415,7 @@ app.post("/api/assistant/message", async (c) => {
     chunks,
     startedAt,
     workerCpu: snapshotCpu(cpu),
+    translation: translationMetadata,
   }));
   finalizeResponseCpu(response, cpu);
   await scheduleAssistantUsage(c, {
@@ -300,6 +425,7 @@ app.post("/api/assistant/message", async (c) => {
     estimatedUsd: answerResult.ok && answerResult.debug.mode === "grounded"
       ? answerResult.debug.estimated_model_cost_usd ?? estimateModelCostUsd(c.env)
       : undefined,
+    translation: translationMetadata,
   });
 
   return c.json(response);
@@ -410,6 +536,44 @@ function buildRetrievalQuery(request: AssistantMessageRequest): string {
   return [request.follow_up.previous_user_message, request.message].join("\n");
 }
 
+function needsEnglishRetrievalTranslation(request: AssistantMessageRequest, detectedLanguage: DetectedLanguage): boolean {
+  if (detectedLanguage === "en") return true;
+  if (request.follow_up && detectMessageLanguage(request.follow_up.previous_user_message) === "en") return true;
+  return hasSubstantiveEnglish(request.message);
+}
+
+function translationFailureMessage(answerLanguage: "ar" | "en"): string {
+  return answerLanguage === "en"
+    ? "We couldn't prepare your question for search right now. Please try again."
+    : "تعذّر تجهيز سؤالك للبحث الآن. من فضلك حاول مرة أخرى.";
+}
+
+function createLanguageFailureEventResponse(
+  request: AssistantMessageRequest,
+  detectedLanguage: DetectedLanguage,
+  answerLanguage: "ar" | "en",
+  message: string,
+  translationDebug?: AssistantTranslationDebug,
+): AssistantMessageResponse {
+  return {
+    message_id: crypto.randomUUID(),
+    conversation_id: request.conversation_id,
+    answer: message,
+    citations: [],
+    suggested_actions: [],
+    confidence: "low",
+    detected_language: detectedLanguage,
+    answer_language: answerLanguage,
+    retrieved_chunks: [],
+    debug: {
+      query: request.message,
+      normalized_query: "",
+      retrieval_mode: "controlled_hybrid",
+      ...(translationDebug ? { translation: translationDebug } : {}),
+    },
+  };
+}
+
 function mergeChunks(primary: RetrievedChunk[], secondary: RetrievedChunk[]): RetrievedChunk[] {
   const chunks: RetrievedChunk[] = [];
   const seen = new Set<string>();
@@ -436,6 +600,7 @@ async function scheduleAssistantQueryEvent(
     chunks: RetrievedChunk[];
     startedAt: number;
     workerCpu?: AssistantWorkerCpuTiming;
+    translation?: AssistantTranslationMetadata;
   },
 ): Promise<void> {
   const write = storeAssistantQueryEvent(c.env, input);
@@ -454,15 +619,22 @@ async function scheduleAssistantUsage(
     responseKind: "model" | "fallback" | "retrieval_only";
     quotaConsumed?: boolean;
     estimatedUsd?: number;
+    translation?: AssistantTranslationMetadata;
+    retrievalPerformed?: boolean;
   },
 ): Promise<void> {
   const write = recordAssistantUsage(c.env, {
-    deviceId: input.request.assistant_device_id,
+    deviceId: input.request.actor_id ?? input.request.assistant_device_id,
     sessionId: input.request.session_id,
     userId: input.request.user_id,
     responseKind: input.responseKind,
     quotaConsumed: input.quotaConsumed,
-    estimatedUsd: input.estimatedUsd,
+    modelCalls: (input.responseKind === "model" ? 1 : 0) + (input.translation?.model_calls ?? 0),
+    retrievalPerformed: input.retrievalPerformed,
+    estimatedUsd: (
+      input.estimatedUsd
+      ?? (input.quotaConsumed ? estimateModelCostUsd(c.env) : 0)
+    ) + (input.translation?.estimated_model_cost_usd ?? 0),
   });
   try {
     c.executionCtx.waitUntil(write);
@@ -577,8 +749,89 @@ app.post("/debug/retrieval", async (c) => {
     return c.json({ error: "invalid_request" }, 400);
   }
 
-  const normalizedQuery = normalizeArabicForSearch(request.message);
-  return c.json(await debugRetrieveChunks(c.env, normalizedQuery));
+  const startedAt = Date.now();
+  const cpu = createCpuTimer();
+  const detectedLanguage = detectMessageLanguage(request.message);
+  const answerLanguage = detectedLanguage === "en" ? "en" : "ar";
+  if (detectedLanguage === "unsupported") {
+    const translationMetadata: AssistantTranslationMetadata = {
+      status: "not_needed", latency_ms: 0, provider_attempts: [], model_calls: 0, estimated_model_cost_usd: 0,
+    };
+    const message = "من فضلك جرّب تسأل بالعربي أو بالإنجليزي.";
+    const internalResponse = createLanguageFailureEventResponse(request, "unsupported", "ar", message, { ...translationMetadata });
+    await scheduleAssistantQueryEvent(c, {
+      request, response: internalResponse, normalizedQuery: "", chunks: [], startedAt,
+      workerCpu: snapshotCpu(cpu), translation: translationMetadata,
+    });
+    return c.json({
+      error: "unsupported_language", message, detected_language: "unsupported", answer_language: "ar",
+      debug: internalResponse.debug,
+    }, 400);
+  }
+  const reservation = await reserveAssistantQuota(c.env, { role: "eval" });
+  if (reservation.action === "fallback") {
+    return c.json({ error: reservation.reason }, 503);
+  }
+  const sourceQuery = request.retrieval_query ?? buildRetrievalQuery(request);
+  const needsTranslation = needsEnglishRetrievalTranslation(request, detectedLanguage);
+  const translated = needsTranslation
+    ? await translateEnglishRetrievalQuery(sourceQuery, modelEnvForCaller(c.env, access.role))
+    : null;
+  const translationMetadata: AssistantTranslationMetadata = translated
+    ? {
+      status: translated.ok ? "translated" : translated.status,
+      provider: translated.provider,
+      latency_ms: translated.latencyMs,
+      provider_attempts: translated.providerAttempts,
+      model_calls: translated.modelCalls,
+      estimated_model_cost_usd: translated.estimatedModelCostUsd,
+    }
+    : { status: "not_needed", latency_ms: 0, provider_attempts: [], model_calls: 0, estimated_model_cost_usd: 0 };
+  const translationDebug: AssistantTranslationDebug | undefined = translated
+    ? { ...translationMetadata, ...(translated.ok ? { retrieval_query: translated.query } : {}) }
+    : undefined;
+  if (translated && !translated.ok) {
+    const message = translationFailureMessage(answerLanguage);
+    const internalResponse = createLanguageFailureEventResponse(request, detectedLanguage, answerLanguage, message, translationDebug);
+    await scheduleAssistantQueryEvent(c, {
+      request, response: internalResponse, normalizedQuery: "", chunks: [], startedAt,
+      workerCpu: snapshotCpu(cpu), translation: translationMetadata,
+    });
+    await scheduleAssistantUsage(c, {
+      request, responseKind: "fallback", quotaConsumed: false, estimatedUsd: 0,
+      translation: translationMetadata, retrievalPerformed: false,
+    });
+    return c.json({
+      error: "translation_unavailable", message, detected_language: detectedLanguage, answer_language: answerLanguage,
+      debug: internalResponse.debug,
+    }, 503);
+  }
+  const retrievalQuery = translated?.ok ? translated.query : sourceQuery;
+  const normalizedQuery = normalizeArabicForSearch(retrievalQuery);
+  const report = await debugRetrieveChunks(c.env, normalizedQuery);
+  const internalResponse = createRetrievalOnlyResponse({
+    conversationId: request.conversation_id,
+    query: request.message,
+    normalizedQuery,
+    chunks: [],
+    detectedLanguage,
+    answerLanguage,
+    translationDebug,
+  });
+  await scheduleAssistantQueryEvent(c, {
+    request, response: internalResponse, normalizedQuery, chunks: [], startedAt,
+    workerCpu: snapshotCpu(cpu), translation: translationMetadata,
+  });
+  await scheduleAssistantUsage(c, {
+    request, responseKind: "retrieval_only", quotaConsumed: false, estimatedUsd: 0,
+    translation: translationMetadata, retrievalPerformed: true,
+  });
+  return c.json({
+    ...report,
+    detected_language: detectedLanguage,
+    answer_language: answerLanguage,
+    translation: translationDebug ?? translationMetadata,
+  });
 });
 
 const worker = Object.assign(app, {

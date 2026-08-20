@@ -54,7 +54,7 @@ export function parseAssistantMessageRequest(value: unknown): AssistantMessageRe
               : undefined,
         }
         : undefined,
-    locale: typeof candidate.locale === "string" ? candidate.locale : undefined,
+    locale: candidate.locale === "ar" || candidate.locale === "en" ? candidate.locale : undefined,
     retrieval_only: candidate.retrieval_only === true,
     debug: candidate.debug === true,
     follow_up: parseFollowUpContext(candidate.follow_up),

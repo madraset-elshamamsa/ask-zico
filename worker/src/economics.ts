@@ -24,6 +24,8 @@ export type AssistantUsageInput = AssistantEconomicsInput & {
   responseKind: AssistantResponseKind;
   estimatedUsd?: number;
   quotaConsumed?: boolean;
+  modelCalls?: number;
+  retrievalPerformed?: boolean;
 };
 
 const DEFAULT_ESTIMATED_MODEL_COST_USD = 0.001;
@@ -111,10 +113,10 @@ export async function recordAssistantUsage(
   const day = dayKey(now);
   const month = monthKey(now);
   const identity = usageIdentity(input);
-  const modelCalls = input.responseKind === "model" ? 1 : 0;
+  const modelCalls = input.modelCalls ?? (input.responseKind === "model" ? 1 : 0);
   const quotaAttempts = (input.quotaConsumed ?? input.responseKind === "model") ? 1 : 0;
   const fallbackCalls = input.responseKind === "fallback" ? 1 : 0;
-  const retrievalCalls = 1;
+  const retrievalCalls = input.retrievalPerformed === false ? 0 : 1;
   const estimatedUsd = input.estimatedUsd ?? (quotaAttempts ? estimateModelCostUsd(env) : 0);
 
   await safeIncrement(env, "day", day, "global", "all", {
