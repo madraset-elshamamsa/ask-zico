@@ -1,6 +1,103 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
+<head>
   <meta charset="utf-8">
-  <title>Ask Zico example client</title>
-  <p>Use your own trusted server-side proxy. Do not place Worker credentials in browser code.</p>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ask Zico — AR/EN client example</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: Canvas; color: CanvasText; }
+    main { width: min(42rem, calc(100% - 2rem)); margin: 3rem auto; }
+    header, form, .answer, .citation { display: grid; gap: .75rem; }
+    header { grid-template-columns: 1fr auto; align-items: start; }
+    .switcher { display: flex; gap: .35rem; direction: ltr; }
+    button, textarea { font: inherit; }
+    button { min-height: 2.75rem; padding: .55rem .9rem; border: 1px solid #7778; border-radius: .65rem; cursor: pointer; }
+    button[aria-pressed="true"] { background: #006e68; color: white; border-color: #006e68; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 7rem; padding: .8rem; border-radius: .65rem; }
+    form { margin-block: 2rem; }
+    .answer, .citation { padding: 1rem; border: 1px solid #7775; border-radius: .8rem; }
+    .citation { margin-block-start: 1rem; }
+    .citation p { margin: 0; }
+    .notice { color: #666; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1 data-i18n="title">اسأل زيكو</h1>
+        <p data-i18n="intro">اسأل بالعربية أو الإنجليزية، وستأتي الإجابة بلغة سؤالك.</p>
+      </div>
+      <div class="switcher" role="group" aria-label="اختيار لغة الواجهة" data-i18n-aria-label="languageSwitcher">
+        <button type="button" data-locale="ar" aria-pressed="true">العربية</button>
+        <button type="button" data-locale="en" aria-pressed="false">English</button>
+      </div>
+    </header>
+
+    <form aria-label="اسأل زيكو" data-i18n-aria-label="formLabel">
+      <label for="message" data-i18n="promptLabel">سؤالك</label>
+      <textarea id="message" name="message" maxlength="800" required placeholder="اكتب سؤالك هنا…" data-i18n-placeholder="placeholder"></textarea>
+      <button type="submit" data-i18n="send">إرسال</button>
+    </form>
+
+    <section class="answer" aria-live="polite">
+      <strong data-i18n="exampleAnswerLabel">مثال للإجابة</strong>
+      <span data-i18n="exampleAnswer">تظل عناوين المصادر ومقتطفاتها بالعربية لأنها بيانات المصدر الأصلية.</span>
+    </section>
+
+    <aside class="citation" data-canonical-citation lang="ar" dir="rtl">
+      <strong data-i18n="sources">المصادر</strong>
+      <a href="https://madraset-elshamamsa.com/articles/wa3zat/ElTariqElDa5ely.php">الطريق الداخلي</a>
+      <p>حل مشاكل الحياة بالنسبة للإنسان يبدأ من الداخل، والطريق الداخلي يبدأ من القلب.</p>
+    </aside>
+
+    <p class="notice" data-i18n="security">اربط هذه الواجهة بخادم وسيط موثوق. لا تضع بيانات اعتماد الـWorker في كود المتصفح.</p>
+  </main>
+
+  <script>
+    (() => {
+      const storageKey = "ask-zico-ui-locale";
+      const messages = {
+        ar: {
+          title: "اسأل زيكو", intro: "اسأل بالعربية أو الإنجليزية، وستأتي الإجابة بلغة سؤالك.",
+          languageSwitcher: "اختيار لغة الواجهة", formLabel: "اسأل زيكو", promptLabel: "سؤالك",
+          placeholder: "اكتب سؤالك هنا…", send: "إرسال", exampleAnswerLabel: "مثال للإجابة",
+          exampleAnswer: "تظل عناوين المصادر ومقتطفاتها بالعربية لأنها بيانات المصدر الأصلية.",
+          sources: "المصادر",
+          security: "اربط هذه الواجهة بخادم وسيط موثوق. لا تضع بيانات اعتماد الـWorker في كود المتصفح."
+        },
+        en: {
+          title: "Ask Zico", intro: "Ask in Arabic or English; the answer follows the language of your message.",
+          languageSwitcher: "Choose interface language", formLabel: "Ask Zico", promptLabel: "Your question",
+          placeholder: "Type your question…", send: "Send", exampleAnswerLabel: "Example answer",
+          exampleAnswer: "Source titles and snippets remain Arabic because they are canonical source metadata.",
+          sources: "Sources",
+          security: "Connect this UI through a trusted server-side proxy. Never put Worker credentials in browser code."
+        }
+      };
+
+      const saved = localStorage.getItem(storageKey);
+      const browserLocale = navigator.languages.find((value) => /^ar(?:-|$)/i.test(value)) ? "ar" : "en";
+
+      function applyLocale(locale, persist = false) {
+        const selected = locale === "en" ? "en" : "ar";
+        const catalog = messages[selected];
+        document.documentElement.lang = selected;
+        document.documentElement.dir = selected === "ar" ? "rtl" : "ltr";
+        document.querySelectorAll("[data-i18n]").forEach((node) => { node.textContent = catalog[node.dataset.i18n]; });
+        document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => { node.placeholder = catalog[node.dataset.i18nPlaceholder]; });
+        document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => { node.setAttribute("aria-label", catalog[node.dataset.i18nAriaLabel]); });
+        document.querySelectorAll("[data-locale]").forEach((button) => { button.setAttribute("aria-pressed", String(button.dataset.locale === selected)); });
+        if (persist) localStorage.setItem(storageKey, selected);
+      }
+
+      document.querySelectorAll("[data-locale]").forEach((button) => {
+        button.addEventListener("click", () => applyLocale(button.dataset.locale, true));
+      });
+      document.querySelector("form").addEventListener("submit", (event) => event.preventDefault());
+      applyLocale(saved === "ar" || saved === "en" ? saved : browserLocale);
+    })();
+  </script>
+</body>
 </html>

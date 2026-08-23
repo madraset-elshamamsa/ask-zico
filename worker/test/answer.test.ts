@@ -86,6 +86,47 @@ describe("validateModelAnswer", () => {
 });
 
 describe("createGroundedAnswer", () => {
+  test.each([
+    { answerLanguage: "ar" as const, wrongAnswer: "The inner path begins in the heart." },
+    { answerLanguage: "en" as const, wrongAnswer: "الطريق الداخلي يبدأ من القلب." },
+  ])("rejects $answerLanguage answers written in the wrong language after one retry", async ({ answerLanguage, wrongAnswer }) => {
+    let calls = 0;
+    const result = await createGroundedAnswer({
+      ASSISTANT_LLM_API_KEY: "key",
+      ASSISTANT_LLM_FETCH: async () => {
+        calls += 1;
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+          status: "ANSWERED",
+          answer: wrongAnswer,
+          confidence: "high",
+          cited_chunk_ids: ["doc:internal-path:0"],
+        }) } }] }));
+      },
+    } as Env, { query: "What is the inner path?", chunks, answerLanguage });
+    expect(calls).toBe(2);
+    expect(result).toMatchObject({ ok: false, reason: "wrong_answer_language", debug: { reason: "wrong_answer_language" } });
+  });
+
+  test("asks for an English grounded answer while preserving Arabic source terms", async () => {
+    let systemPrompt = "";
+    const result = await createGroundedAnswer({
+      ASSISTANT_LLM_API_KEY: "key",
+      ASSISTANT_LLM_FETCH: async (_url, init) => {
+        const payload = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content: string }> };
+        systemPrompt = payload.messages.find((message) => message.role === "system")?.content ?? "";
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+          status: "ANSWERED",
+          answer: "The الطريق الداخلي begins in the heart.",
+          confidence: "high",
+          cited_chunk_ids: ["doc:internal-path:0"],
+        }) } }] }));
+      },
+    } as Env, { query: "What is the inner path?", chunks, answerLanguage: "en" });
+    expect(result.ok && result.answer.answer).toContain("الطريق الداخلي");
+    expect(systemPrompt).toContain("Answer in clear English");
+    expect(systemPrompt).toContain("quoted terms exactly");
+  });
+
   test("calls an OpenAI-compatible model with retrieved text and parses grounded JSON", async () => {
     const requests: Record<string, unknown>[] = [];
     const env: Env = {

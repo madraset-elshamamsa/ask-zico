@@ -5,7 +5,11 @@ tags and separately versions its HTTP contract.
 
 ## Unreleased
 
-No changes yet.
+- Added AR/EN message classification, English-to-Arabic retrieval-query translation, direct
+  English grounded answers, and unsupported-language short-circuiting.
+- Advanced the HTTP contract to v1.1 with `detected_language` and `answer_language`.
+- Added translation observability, an additive D1 migration, an AR/EN example client, and
+  25 bilingual retrieval-parity evaluation pairs.
 
 ## 1.0.0-rc.4 — 2026-08-09
 

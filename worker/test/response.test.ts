@@ -283,3 +283,20 @@ describe("public-site fallback actions", () => {
     });
   });
 });
+
+describe("language-aware fallback responses", () => {
+  test("returns English fallback copy and search label for an English answer", () => {
+    const response = createFallbackAnswerResponse({
+      query: "What is the inner path?",
+      normalizedQuery: "الطريق الداخلي",
+      chunks: [],
+      fallbackReason: "model_provider_error",
+      detectedLanguage: "en",
+      answerLanguage: "en",
+    });
+
+    expect(response.answer).toContain("smart answer");
+    expect(response.suggested_actions[0]?.label).toBe("Search the site");
+    expect(response).toMatchObject({ detected_language: "en", answer_language: "en" });
+  });
+});

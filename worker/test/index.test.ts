@@ -32,11 +32,11 @@ describe("assistant worker", () => {
     const response = await app.request("/health", {}, createEnv([]));
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("x-ask-zico-contract-version")).toBe("1.0.0");
+    expect(response.headers.get("x-ask-zico-contract-version")).toBe("1.1.0");
     await expect(response.json()).resolves.toEqual({
       ok: true,
       service: "ask-zico",
-      contract_version: "1.0.0",
+      contract_version: "1.1.0",
     });
   });
 
@@ -248,7 +248,7 @@ describe("assistant worker", () => {
         },
         body: JSON.stringify({
           conversation_id: "retrieval-eval-1",
-          message: "internal path",
+          message: "الطريق الداخلي",
           retrieval_only: true,
         }),
       },
@@ -256,14 +256,14 @@ describe("assistant worker", () => {
         {
           doc_id: "wa3zat:ElTariqElDa5ely",
           chunk_id: "wa3zat:ElTariqElDa5ely:0",
-          title: "Internal Path",
+          title: "الطريق الداخلي",
           url: "https://madraset-elshamamsa.com/articles/wa3zat/ElTariqElDa5ely.php",
-          text: "The internal path starts in the heart.",
-          search_text: "internal path heart",
+          text: "الطريق الداخلي يبدأ من القلب.",
+          search_text: "الطريق الداخلي القلب",
           content_type: "article",
-          library: "Wa3zat",
-          section: "Content",
-          language: "en",
+          library: "عظات",
+          section: "المحتوى",
+          language: "ar",
         },
       ]),
     );
@@ -438,10 +438,10 @@ describe("assistant worker", () => {
           "x-assistant-eval-token": "eval-secret",
         },
         body: JSON.stringify({
-          message: "internal path",
+          message: "الطريق الداخلي",
           retrieval_only: true,
           debug: true,
-          normalized_query: "internal path",
+          normalized_query: "الطريق الداخلي",
         }),
       },
       createEnv([], { ASSISTANT_EVAL_TOKEN: "eval-secret" }),
@@ -465,7 +465,7 @@ describe("assistant worker", () => {
           "content-type": "application/json",
           "x-assistant-proxy-token": "proxy-secret",
         },
-        body: JSON.stringify({ message: "test" }),
+        body: JSON.stringify({ message: "اختبار" }),
       },
       env,
     );
@@ -479,7 +479,7 @@ describe("assistant worker", () => {
           "content-type": "application/json",
           "x-assistant-eval-token": "eval-secret",
         },
-        body: JSON.stringify({ message: "test" }),
+        body: JSON.stringify({ message: "اختبار" }),
       },
       env,
     );

@@ -7,6 +7,7 @@ import type {
   AssistantObservabilityRange,
   AssistantObservabilitySummary,
   AssistantObservabilityTotals,
+  AssistantTranslationMetadata,
   Env,
   RetrievedChunk,
   AssistantWorkerCpuTiming,
@@ -29,6 +30,7 @@ export type AssistantObservabilityEventInput = {
   startedAt: number;
   createdAt?: string;
   workerCpu?: AssistantWorkerCpuTiming;
+  translation?: AssistantTranslationMetadata;
 };
 
 export type AdminAccessResult = { ok: true } | { ok: false; status: 401; error: "invalid_admin_token" };
@@ -75,17 +77,28 @@ export async function storeAssistantQueryEvent(env: Env, input: AssistantObserva
   const fallbackReason = answerDebug?.mode === "fallback" ? answerDebug.reason : null;
   const quotaBlockReason = fallbackReason && fallbackReason !== "model_provider_error" && fallbackReason !== "retrieval_error" ? fallbackReason : null;
   const compactContext = answerDebug?.mode === "grounded" && answerDebug.compact_context === true;
-  const estimatedModelCostUsd = answerDebug?.mode === "grounded" ? answerDebug.estimated_model_cost_usd ?? estimateModelCostUsd(env) : 0;
+  const estimatedModelCostUsd = (
+    answerDebug?.mode === "grounded"
+      ? answerDebug.estimated_model_cost_usd ?? estimateModelCostUsd(env)
+      : 0
+  ) + (input.translation?.estimated_model_cost_usd ?? 0);
   const modelProvider = answerDebug?.mode === "grounded" ? answerDebug.model_provider ?? null : null;
   const modelName = answerDebug?.mode === "grounded" ? answerDebug.model_name ?? null : null;
   const providerFallbackReason = answerDebug?.mode === "grounded" || answerDebug?.mode === "handoff" ? answerDebug.provider_fallback_reason ?? null : null;
-  const providerAttemptsJson = answerDebug?.mode === "grounded" || answerDebug?.mode === "handoff" ? JSON.stringify(answerDebug.provider_attempts ?? []) : "[]";
+  const answerProviderAttempts = answerDebug?.mode === "grounded" || answerDebug?.mode === "handoff"
+    ? answerDebug.provider_attempts ?? []
+    : [];
+  const providerAttemptsJson = JSON.stringify([
+    ...(input.translation?.provider_attempts ?? []),
+    ...answerProviderAttempts,
+  ]);
   const workerCpu = input.workerCpu ?? input.response.debug?.worker_cpu ?? null;
 
   try {
     const result = await env.ASSISTANT_FEEDBACK_DB.prepare(
       `INSERT INTO assistant_query_events (
         message_id, session_id, conversation_id, user_id, created_at, page_url, page_title, locale,
+        ui_locale, detected_language, answer_language, translation_status, translation_latency_ms,
         query_text, normalized_query, answered, retrieved_references, cited_references, confidence,
         answer_mode, answer_failure_reason, retrieval_mode, latency_ms, semantic_domains_json,
         doc_ids_json, chunk_ids_json, citation_urls_json, is_follow_up, parent_message_id,
@@ -93,11 +106,13 @@ export async function storeAssistantQueryEvent(env: Env, input: AssistantObserva
         compact_context, fallback_reason, model_provider, model_name, provider_fallback_reason,
         provider_attempts_json, worker_cpu_ms, worker_cpu_over_budget, worker_cpu_phases_json,
         answer_preview, answer_preview_truncated
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       input.response.message_id, input.request.session_id ?? null, input.response.conversation_id ?? input.request.conversation_id ?? null,
       input.request.user_id ?? null, createdAt, input.request.page_context?.url ?? null, input.request.page_context?.title ?? null,
-      input.request.locale ?? null, input.request.message, input.normalizedQuery, answered ? 1 : 0,
+      input.request.locale ?? null, input.request.locale ?? null, input.response.detected_language, input.response.answer_language,
+      input.translation?.status ?? (input.response.detected_language === "ar" ? "not_needed" : null),
+      input.translation?.latency_ms ?? null, input.request.message, input.normalizedQuery, answered ? 1 : 0,
       retrievedReferences ? 1 : 0, citedReferences ? 1 : 0, input.response.confidence, answerMode, answerFailureReason,
       input.response.debug?.retrieval_mode ?? "controlled_hybrid", latencyMs,
       JSON.stringify(uniqueStrings(input.chunks.map((chunk) => chunk.semanticDomain))),

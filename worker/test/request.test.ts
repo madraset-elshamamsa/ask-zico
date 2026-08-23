@@ -1,4 +1,4 @@
-﻿import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { parseAssistantMessageRequest } from "../src/request";
 
 describe("parseAssistantMessageRequest", () => {
@@ -53,6 +53,13 @@ describe("parseAssistantMessageRequest", () => {
 
     expect(request?.normalized_query).toBe("normalized query");
     expect(request?.retrieval_query).toBe("retrieval query");
+  });
+
+  test("accepts only supported UI locales", () => {
+    expect(parseAssistantMessageRequest({ message: "سؤال", locale: "ar" })?.locale).toBe("ar");
+    expect(parseAssistantMessageRequest({ message: "Question", locale: "en" })?.locale).toBe("en");
+    expect(parseAssistantMessageRequest({ message: "Question", locale: "fr" })?.locale).toBeUndefined();
+    expect(parseAssistantMessageRequest({ message: "Question", locale: " EN " })?.locale).toBeUndefined();
   });
 
 });

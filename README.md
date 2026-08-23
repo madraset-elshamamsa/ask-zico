@@ -22,6 +22,9 @@ provider routing, conservative fallbacks, and privacy-aware observability.
   privacy-preserving quota identities, abuse controls, and the private Worker credential.
 - **Provider fallback preserves the evidence contract.** A Gemini model ladder and a
   qualifying OpenRouter fallback share the same structured answer and citation validation.
+- **Arabic evidence supports Arabic and English questions.** English retrieval queries are
+  translated to Arabic before retrieval, while the grounded answer is generated directly
+  in the language of the message. The corpus and citation metadata remain canonical Arabic.
 - **The integration is versioned and testable.** The stable API includes OpenAPI
   documentation, executable fixtures, a deterministic local stub, and a release pinning
   procedure for consumers.
@@ -95,6 +98,7 @@ under MIT; see [BRANDING.md](BRANDING.md) and [NOTICE.md](NOTICE.md).
 - Corpus ingestion, KV preparation, Vectorize preparation, and evaluation tools.
 - A small original Arabic sample corpus that can be generated without private paths.
 - A public OpenAPI contract, deterministic local stub, and protected PHP proxy example.
+- An accessible AR/EN example client and a 25-pair bilingual retrieval evaluation set.
 
 ## Quick start
 
@@ -126,6 +130,26 @@ npm run stub:contract
 Then point a trusted application proxy at `http://127.0.0.1:8790` with the same token. See
 [the integration guide](docs/integration.md) and `examples/php-proxy/` for the boundary and
 upgrade procedure.
+
+## Arabic and English boundary
+
+The public `locale` request field is the interface locale (`ar` or `en`), not an answer
+override. Each message is classified independently. Arabic messages pass directly to
+retrieval; English messages are translated to an internal Arabic retrieval query and the
+grounded answer call is instructed to answer in English. Other languages stop before
+retrieval or model use and receive Arabic guidance to retry in Arabic or English.
+
+Responses expose `detected_language` (`ar`, `en`, or `unsupported`) and
+`answer_language` (`ar` or `en`). The translated retrieval query and translation details
+are restricted to evaluation/debug and operational paths. Source text, titles, snippets,
+and URLs are never translated. Deployments need `ASSISTANT_GEMINI_API_KEY` for English
+query translation; the existing OpenRouter key is used only as a provider-failure fallback.
+
+Run the strict 25-pair source-parity gate against a configured Worker with:
+
+```powershell
+node tools/run-assistant-worker-retrieval-eval.mjs --eval examples/evals/assistant-bilingual-retrieval-eval.jsonl --token <evaluation-token>
+```
 
 ## Documentation
 

@@ -1,3 +1,18 @@
+export type SupportedLanguage = "ar" | "en";
+export type DetectedLanguage = SupportedLanguage | "unsupported";
+export type AssistantTranslationStatus = "not_needed" | "translated" | "failed" | "missing_config";
+export type AssistantTranslationMetadata = {
+  status: AssistantTranslationStatus;
+  provider?: "gemini" | "openrouter";
+  latency_ms: number;
+  provider_attempts?: AssistantProviderAttempt[];
+  model_calls?: number;
+  estimated_model_cost_usd?: number;
+};
+export type AssistantTranslationDebug = AssistantTranslationMetadata & {
+  retrieval_query?: string;
+};
+
 export type Confidence = "retrieval_only" | "low" | "medium" | "high";
 export type RetrievalMode = "controlled_hybrid" | "controlled_vector" | "controlled_lexical";
 
@@ -24,7 +39,7 @@ export type AssistantMessageRequest = {
     url?: string;
     title?: string;
   };
-  locale?: string;
+  locale?: SupportedLanguage;
   retrieval_only?: boolean;
   debug?: boolean;
   follow_up?: AssistantFollowUpContext;
@@ -131,6 +146,8 @@ export type AssistantMessageResponse = {
   citations: Citation[];
   suggested_actions: SuggestedAction[];
   confidence: Confidence;
+  detected_language: DetectedLanguage;
+  answer_language: SupportedLanguage;
   trace_id?: string;
   retrieved_chunks: AssistantResponseChunk[];
   quota?: AssistantQuotaMetadata;
@@ -139,6 +156,7 @@ export type AssistantMessageResponse = {
     normalized_query: string;
     retrieval_mode: RetrievalMode;
     answer?: AssistantAnswerDebug;
+    translation?: AssistantTranslationDebug;
     worker_cpu?: AssistantWorkerCpuTiming;
     worker_profile?: AssistantWorkerProfileTiming;
   };
@@ -246,6 +264,7 @@ export type AssistantAnswerFailureReason =
   | "empty_content"
   | "invalid_json"
   | "incomplete_answer"
+  | "wrong_answer_language"
   | "no_valid_citations"
   | "not_found_in_context";
 
@@ -255,6 +274,7 @@ export type AssistantProviderAttempt = {
   provider: AssistantModelProvider;
   model: string;
   ok: boolean;
+  operation?: "answer" | "translation";
   reason?: AssistantAnswerFailureReason;
   status?: number;
   fallback_reason?: string;
