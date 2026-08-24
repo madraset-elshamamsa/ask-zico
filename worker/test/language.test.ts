@@ -46,6 +46,31 @@ describe("detectMessageLanguage", () => {
     expect(result).toMatchObject({ ok: true, query: "ما هو الطريق الداخلي؟", provider: "gemini", estimatedModelCostUsd: 0.001 });
   });
 
+  test("asks the translator to preserve source terms and add canonical Arabic aliases without extra details", async () => {
+    const result = await translateEnglishRetrievalQuery("When is the Omonogenis hymn chanted?", {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as { contents?: Array<{ parts?: Array<{ text?: string }> }> };
+        const prompt = request.contents?.[0]?.parts?.[0]?.text ?? "";
+        const followsRetrievalContract = prompt.includes("add its canonical Arabic spelling or transliteration")
+          && prompt.includes("Do not add facts, titles, or qualifiers");
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{
+            text: followsRetrievalContract
+              ? "متى يُقال لحن أومونوجينيس (Omonogenis)؟"
+              : "متى يُقال لحن Omonogenis؟",
+          }] } }],
+        }));
+      },
+    } as Env);
+
+    expect(result).toMatchObject({
+      ok: true,
+      query: "متى يُقال لحن أومونوجينيس (Omonogenis)؟",
+      provider: "gemini",
+    });
+  });
+
   test("uses OpenRouter when Gemini has a provider failure", async () => {
     const result = await translateEnglishRetrievalQuery("What is the inner path?", {
       ASSISTANT_GEMINI_API_KEY: "gemini-key", ASSISTANT_LLM_API_KEY: "openrouter-key", ASSISTANT_CHAT_MODEL: "test/model",
