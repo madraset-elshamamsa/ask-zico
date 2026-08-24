@@ -109,7 +109,16 @@ export async function translateEnglishRetrievalQuery(query: string, env: Env): P
   const startedAt = Date.now();
   const fetchImpl: AssistantLlmFetch = env.ASSISTANT_LLM_FETCH ?? fetch;
   const providerAttempts: AssistantProviderAttempt[] = [];
-  const prompt = "Translate this English search query into concise Arabic for retrieving an Arabic corpus. Preserve every Coptic term, hymn title, proper name, and quoted term exactly, and also add its canonical Arabic spelling or transliteration next to it when known. Translate standard English liturgical terms into their canonical Arabic terms. Do not add facts, titles, or qualifiers that are not present in the English query. Return only the Arabic query.\n\n" + query;
+  const prompt = [
+    "Translate this English search query into concise Arabic for retrieving an Arabic corpus.",
+    "Translate literally without paraphrasing or broadening the query.",
+    "Preserve every Coptic term, hymn title, proper name, and quoted term exactly, and also add its canonical Arabic spelling or transliteration next to it when known.",
+    "Translate standard English liturgical terms into their canonical Arabic terms.",
+    "Use these canonical corpus terms when applicable: Omonogenis = أومونوجينيس; Barzillai the Gileadite = برزلاي الجلعادي; Jephthah = يفتاح; Anaphora = الأنافورا; Holy Week = أسبوع الآلام; oblation = القربانة.",
+    "Do not add facts, titles, or qualifiers that are not present in the English query.",
+    "Return only the Arabic query.",
+    "\n" + query,
+  ].join(" ");
 
   if (!env.ASSISTANT_GEMINI_API_KEY) {
     return { ok: false, status: "missing_config", latencyMs: Date.now() - startedAt, providerAttempts, modelCalls: 0, estimatedModelCostUsd: 0 };

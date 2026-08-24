@@ -71,6 +71,38 @@ describe("detectMessageLanguage", () => {
     });
   });
 
+  test("provides canonical corpus terminology for ambiguous liturgical terms", async () => {
+    const result = await translateEnglishRetrievalQuery("How is the Anaphora prayed?", {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as { contents?: Array<{ parts?: Array<{ text?: string }> }> };
+        const prompt = request.contents?.[0]?.parts?.[0]?.text ?? "";
+        const translated = prompt.includes("Anaphora = الأنافورا")
+          ? "كيف تُصلى الأنافورا (Anaphora)؟"
+          : "كيف يُصلى القداس الإلهي (Anaphora)؟";
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: translated }] } }] }));
+      },
+    } as Env);
+
+    expect(result).toMatchObject({ ok: true, query: "كيف تُصلى الأنافورا (Anaphora)؟" });
+  });
+
+  test("asks for literal retrieval translation without paraphrasing or broadening", async () => {
+    const result = await translateEnglishRetrievalQuery("What were the main events in David's life?", {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as { contents?: Array<{ parts?: Array<{ text?: string }> }> };
+        const prompt = request.contents?.[0]?.parts?.[0]?.text ?? "";
+        const translated = prompt.includes("Translate literally without paraphrasing or broadening")
+          ? "ما أهم الأحداث في حياة داود (David)؟"
+          : "ما هي الأحداث الرئيسية في حياة داود النبي (David)؟";
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: translated }] } }] }));
+      },
+    } as Env);
+
+    expect(result).toMatchObject({ ok: true, query: "ما أهم الأحداث في حياة داود (David)؟" });
+  });
+
   test("uses OpenRouter when Gemini has a provider failure", async () => {
     const result = await translateEnglishRetrievalQuery("What is the inner path?", {
       ASSISTANT_GEMINI_API_KEY: "gemini-key", ASSISTANT_LLM_API_KEY: "openrouter-key", ASSISTANT_CHAT_MODEL: "test/model",
