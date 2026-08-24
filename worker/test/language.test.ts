@@ -103,6 +103,30 @@ describe("detectMessageLanguage", () => {
     expect(result).toMatchObject({ ok: true, query: "ما أهم الأحداث في حياة داود (David)؟" });
   });
 
+  test.each([
+    {
+      label: "canonical hymn terminology",
+      english: "What does the hymn title Omonogenis mean?",
+      providerOutput: "ما معنى عنوان الترتيلة أومونوجينيس (Omonogenis)؟",
+      expected: "ما معنى عنوان لحن أومونوجينيس (Omonogenis)؟",
+    },
+    {
+      label: "literal main-events phrasing",
+      english: "What were the main events in David's life?",
+      providerOutput: "ما هي الأحداث الرئيسية في حياة داود (David)؟",
+      expected: "ما أهم الأحداث في حياة داود (David)؟",
+    },
+  ])("canonicalizes $label after provider translation", async ({ english, providerOutput, expected }) => {
+    const result = await translateEnglishRetrievalQuery(english, {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async () => new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: providerOutput }] } }],
+      })),
+    } as Env);
+
+    expect(result).toMatchObject({ ok: true, query: expected });
+  });
+
   test("uses OpenRouter when Gemini has a provider failure", async () => {
     const result = await translateEnglishRetrievalQuery("What is the inner path?", {
       ASSISTANT_GEMINI_API_KEY: "gemini-key", ASSISTANT_LLM_API_KEY: "openrouter-key", ASSISTANT_CHAT_MODEL: "test/model",

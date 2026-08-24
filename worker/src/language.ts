@@ -105,6 +105,13 @@ function scriptLetterCounts(value: string): { arabic: number; latin: number; oth
   return { arabic, latin, other };
 }
 
+function canonicalizeArabicRetrievalQuery(value: string): string {
+  return value
+    .replace(/الترتيلة|ترتيلة/gu, "لحن")
+    .replace(/ما هي الأحداث الرئيسية/gu, "ما أهم الأحداث")
+    .replace(/الأحداث الرئيسية/gu, "أهم الأحداث");
+}
+
 export async function translateEnglishRetrievalQuery(query: string, env: Env): Promise<TranslationResult> {
   const startedAt = Date.now();
   const fetchImpl: AssistantLlmFetch = env.ASSISTANT_LLM_FETCH ?? fetch;
@@ -133,7 +140,8 @@ export async function translateEnglishRetrievalQuery(query: string, env: Env): P
       });
       if (response.ok) {
         const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-        const translated = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
+        const translatedText = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
+        const translated = translatedText ? canonicalizeArabicRetrievalQuery(translatedText) : translatedText;
         if (translated && isMeaningfullyArabic(translated)) {
           providerAttempts.push({ provider: "gemini", model: geminiModel, ok: true, operation: "translation" });
           return { ok: true, query: translated, provider: "gemini", latencyMs: Date.now() - startedAt, providerAttempts, modelCalls: 1, estimatedModelCostUsd: estimateModelCostUsd(env) };
@@ -158,7 +166,8 @@ export async function translateEnglishRetrievalQuery(query: string, env: Env): P
       });
       if (response.ok) {
         const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-        const translated = payload.choices?.[0]?.message?.content?.trim();
+        const translatedText = payload.choices?.[0]?.message?.content?.trim();
+        const translated = translatedText ? canonicalizeArabicRetrievalQuery(translatedText) : translatedText;
         if (translated && isMeaningfullyArabic(translated)) {
           providerAttempts.push({ provider: "openrouter", model: openRouterModel, ok: true, operation: "translation" });
           return { ok: true, query: translated, provider: "openrouter", latencyMs: Date.now() - startedAt, providerAttempts, modelCalls: providerAttempts.length, estimatedModelCostUsd: providerAttempts.length * estimateModelCostUsd(env) };
