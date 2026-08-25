@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import app from "../src/index";
-import { cleanupExpiredAssistantAnswerPreviews, storeAssistantQueryEvent } from "../src/observability";
-import type { Env, StoredChunk } from "../src/types";
+import { cleanupExpiredAssistantAnswerPreviews, renderAssistantObservabilityDashboard, storeAssistantQueryEvent } from "../src/observability";
+import type { AssistantObservabilitySummary, Env, StoredChunk } from "../src/types";
 
 type RecordedQuery = {
   query: string;
@@ -66,6 +66,29 @@ const chunk: StoredChunk = {
 };
 
 describe("assistant observability", () => {
+  test("stores retrieval-only evaluator events with their real response kind", async () => {
+    const env = createEnv([]);
+    await storeAssistantQueryEvent(env, {
+      request: { message: "What is the inner path?", retrieval_only: true },
+      response: {
+        message_id: "message-retrieval-only",
+        answer: "",
+        citations: [],
+        suggested_actions: [],
+        confidence: "retrieval_only",
+        detected_language: "en",
+        answer_language: "en",
+        retrieved_chunks: [],
+      },
+      normalizedQuery: "ما هو الطريق الداخلي",
+      chunks: [],
+      startedAt: Date.now(),
+    });
+
+    const insert = env.__TEST_RECORDED_QUERIES.find((item) => item.query.includes("INSERT INTO assistant_query_events"));
+    expect(insert?.values[30]).toBe("retrieval_only");
+  });
+
   test("stores language metadata without storing a second translated-query copy", async () => {
     const env = createEnv([]);
     const originalQuery = "What is the inner path?";
@@ -459,6 +482,7 @@ describe("assistant observability", () => {
         {
           total_queries: 3,
           answered_queries: 2,
+          retrieval_only_queries: 1,
           retrieved_references: 2,
           cited_references: 1,
           likes: 1,
@@ -484,6 +508,7 @@ describe("assistant observability", () => {
       totals: {
         total_queries: 3,
         answered_queries: 2,
+        retrieval_only_queries: 1,
         retrieved_references: 2,
         cited_references: 1,
         likes: 1,
@@ -507,12 +532,75 @@ describe("assistant observability", () => {
     expect(response.status).toBe(200);
     const summaryQuery = env.__TEST_RECORDED_QUERIES?.find((item) => item.query.includes("COUNT(*) AS total_queries"));
     expect(summaryQuery?.query).toContain("answered = 0");
+    expect(summaryQuery?.query).toContain("response_kind");
+    expect(summaryQuery?.query).toContain("confidence");
+    expect(summaryQuery?.query).toContain("retrieval_only");
     expect(summaryQuery?.query).toContain("rating = ?");
     expect(summaryQuery?.query).toContain("semantic_domains_json LIKE ?");
     expect(summaryQuery?.values).toEqual(expect.arrayContaining(["down", "%ta3lim%"]));
     await expect(response.json()).resolves.toMatchObject({
       filters: { topic: "ta3lim", answer_state: "unanswered", feedback: "down" },
     });
+  });
+
+  test("excludes retrieval-only evaluations from the unanswered failure table", async () => {
+    const env = createEnv([], {
+      __TEST_OBSERVABILITY_ROWS: [{ total_queries: 0, answered_queries: 0, retrieval_only_queries: 0 }],
+    });
+    await app.request(
+      "/api/assistant/observability/summary?range=24h",
+      { method: "GET", headers: { "x-assistant-admin-token": "admin-token" } },
+      env,
+    );
+
+    const failureQuery = env.__TEST_RECORDED_QUERIES.find((item) => item.query.includes("GROUP BY query_text, answer_failure_reason"));
+    expect(failureQuery?.query).toContain("response_kind");
+    expect(failureQuery?.query).toContain("confidence");
+    expect(failureQuery?.query).toContain("retrieval_only");
+  });
+
+  test("renders retrieval evaluations separately from unanswered answer attempts", () => {
+    const summary = {
+      range: "24h",
+      since: "2026-08-24T00:00:00.000Z",
+      filters: { topic: null, answer_state: "all", feedback: "all" },
+      available_topics: ["bible"],
+      totals: {
+        total_queries: 102,
+        answered_queries: 2,
+        retrieval_only_queries: 100,
+        retrieved_references: 100,
+        cited_references: 2,
+        likes: 0,
+        dislikes: 0,
+        neutral: 102,
+      },
+      cpu: { over_budget_queries: 0, over_budget_percent: "0%" },
+      recent_events: [{
+        created_at: "2026-08-24T17:46:23.674Z",
+        user_id: null,
+        query_text: "ما أهم الأحداث في حياة داود (David)؟",
+        answered: 0,
+        retrieved_references: 1,
+        cited_references: 0,
+        confidence: "retrieval_only",
+        response_kind: "fallback",
+        answer_mode: null,
+        answer_failure_reason: null,
+        rating: null,
+        semantic_domains_json: '["bible"]',
+        answer_preview: null,
+        answer_preview_truncated: 0,
+      }],
+      domains: [], failures: [], sources: [], cpu_over_budget: [],
+    } as AssistantObservabilitySummary;
+
+    const html = renderAssistantObservabilityDashboard(summary);
+    expect(html).toContain("Retrieval evals</span><strong>100</strong>");
+    expect(html).toContain("Answered</span><strong>2 (100%)</strong>");
+    expect(html).toContain("Retrieval evaluation");
+    expect(html).toContain("Not applicable for retrieval-only evaluations.");
+    expect(html).not.toContain(">Unanswered</span>");
   });
 
   test("clears only answer previews older than the retention cutoff", async () => {
