@@ -68,6 +68,252 @@ function createEnv(kvCalls: KvCall[] = []): Env {
 }
 
 describe("retrieveChunks", () => {
+  test("adds the original English message as a secondary vector query while keeping Arabic routing", async () => {
+    const embeddingInputs: string[] = [];
+    const vectorFilters: unknown[] = [];
+    const chunksById: Record<string, StoredChunk> = {
+      "bible:primary:0": {
+        doc_id: "bible:primary",
+        chunk_id: "bible:primary:0",
+        title: "نتيجة عربية",
+        url: "https://example.test/arabic-result",
+        text: "نتيجة البحث بالمتجه العربي.",
+        search_text: "نتيجة البحث بالمتجه العربي",
+        semanticDomain: "bible",
+      },
+      "bible:secondary:0": {
+        doc_id: "bible:secondary",
+        chunk_id: "bible:secondary:0",
+        title: "حياة داود",
+        url: "https://example.test/david",
+        text: "مصدر عربي عن أهم الأحداث في حياة داود.",
+        search_text: "اهم الاحداث في حياة داود",
+        semanticDomain: "bible",
+      },
+    };
+    const chunks = await retrieveChunks(
+      {
+        RETRIEVAL_TOP_K: "2",
+        RETRIEVAL_CANDIDATE_K: "10",
+        ASSISTANT_EMBEDDING_MODEL: "@cf/test/embed",
+        ASSISTANT_AI: {
+          run: async (_model, input) => {
+            const query = String((input as { text?: string[] }).text?.[0] ?? "");
+            embeddingInputs.push(query);
+            return { data: [[query.startsWith("What") ? 0.9 : 0.1, 0.2, 0.3]] };
+          },
+        },
+        ASSISTANT_VECTORIZE: {
+          query: async (vector, options) => {
+            vectorFilters.push(options?.filter);
+            return {
+              matches: [{
+                id: vector[0] === 0.9 ? "bible:secondary:0" : "bible:primary:0",
+                score: 0.91,
+              }],
+            };
+          },
+        },
+        ASSISTANT_CHUNKS: {
+          get: async (key) => chunksById[key] ?? null,
+        },
+      },
+      "ما أهم الأحداث في حياة داود في الكتاب المقدس",
+      undefined,
+      { secondaryVectorQuery: "What were the main events in David's life?" },
+    );
+
+    expect(embeddingInputs).toEqual([
+      "ما اهم الاحداث في حياه داود في الكتاب المقدس",
+      "What were the main events in David's life?",
+    ]);
+    expect(chunks.map((chunk) => chunk.chunk_id)).toEqual([
+      "bible:primary:0",
+      "bible:secondary:0",
+    ]);
+    expect(vectorFilters).toHaveLength(2);
+    expect(vectorFilters[1]).toEqual(vectorFilters[0]);
+    expect(JSON.stringify(vectorFilters[0])).toContain("bible");
+  });
+
+  test("continues with Arabic vector retrieval when the secondary English embedding fails", async () => {
+    let vectorQueries = 0;
+    const chunks = await retrieveChunks(
+      {
+        RETRIEVAL_TOP_K: "1",
+        RETRIEVAL_CANDIDATE_K: "10",
+        ASSISTANT_EMBEDDING_MODEL: "@cf/test/embed",
+        ASSISTANT_AI: {
+          run: async (_model, input) => {
+            const query = String((input as { text?: string[] }).text?.[0] ?? "");
+            if (query.startsWith("What")) throw new Error("secondary embedding unavailable");
+            return { data: [[0.1, 0.2, 0.3]] };
+          },
+        },
+        ASSISTANT_VECTORIZE: {
+          query: async () => {
+            vectorQueries += 1;
+            return { matches: [{ id: "wa3zat:ElTariqElDa5ely:0", score: 0.91 }] };
+          },
+        },
+        ASSISTANT_CHUNKS: {
+          get: async (key) => lookupChunks[key] ?? null,
+        },
+      },
+      "ما هو الطريق الداخلي",
+      undefined,
+      { secondaryVectorQuery: "What is the inner path?" },
+    );
+
+    expect(vectorQueries).toBe(1);
+    expect(chunks.map((chunk) => chunk.chunk_id)).toEqual(["wa3zat:ElTariqElDa5ely:0"]);
+  });
+
+  test("keeps a distinct vector source when lexical top ranks repeat one document", async () => {
+    const target: StoredChunk = {
+      doc_id: "taqs:target",
+      chunk_id: "taqs:target:0",
+      title: "المصدر الطقسي المقصود",
+      url: "https://example.test/target",
+      text: "المصدر الصحيح الذي اتفق عليه المتجه العربي والإنجليزي.",
+      search_text: "المصدر الطقسي المقصود",
+      semanticDomain: "taqs",
+    };
+    const lexicalNoise: StoredChunk = {
+      doc_id: "taqs:noise",
+      chunk_id: "taqs:noise:0",
+      title: "شرح عام للقداس",
+      url: "https://example.test/noise",
+      text: "نتيجة لفظية عامة.",
+      search_text: "اعطني تعليمات كهنوتيه مفصله لاقامه القداس الالهي بنفسي",
+      semanticDomain: "taqs",
+    };
+    const secondLexicalNoise: StoredChunk = {
+      ...lexicalNoise,
+      chunk_id: "taqs:noise:1",
+      title: "شرح عام آخر للقداس",
+      section: "جزء آخر من نفس المصدر",
+    };
+    const chunks = await retrieveChunks(
+      {
+        RETRIEVAL_TOP_K: "2",
+        RETRIEVAL_CANDIDATE_K: "10",
+        ASSISTANT_LEXICAL_KEYS: "lexical:domain",
+        ASSISTANT_EMBEDDING_MODEL: "@cf/test/embed",
+        ASSISTANT_AI: { run: async () => ({ data: [[0.1, 0.2, 0.3]] }) },
+        ASSISTANT_VECTORIZE: {
+          query: async () => ({ matches: [{ id: target.chunk_id, score: 0.5 }] }),
+        },
+        ASSISTANT_CHUNKS: {
+          get: async (key) => {
+            if (key === "lexical:domain:taqs") return [lexicalNoise, secondLexicalNoise];
+            if (key === target.chunk_id) return target;
+            if (key === lexicalNoise.chunk_id) return lexicalNoise;
+            if (key === secondLexicalNoise.chunk_id) return secondLexicalNoise;
+            return null;
+          },
+        },
+      },
+      "اعطني تعليمات كهنوتيه مفصله لاقامه القداس الالهي بنفسي",
+      undefined,
+      { secondaryVectorQuery: "Give me detailed priestly instructions for the liturgy." },
+    );
+
+    expect(chunks.map((chunk) => chunk.chunk_id)).toContain(target.chunk_id);
+    expect(new Set(chunks.map((chunk) => chunk.doc_id)).size).toBe(chunks.length);
+  });
+
+  test("matches a translated English term to a phonetic corpus identifier", async () => {
+    const target: StoredChunk = {
+      doc_id: "taqs:Anafora",
+      chunk_id: "taqs:Anafora:0",
+      title: "الأنافورا",
+      section: "الأنافورا",
+      source_ref: "Anafora.mdx",
+      url: "https://example.test/anafora",
+      text: "شرح عربي للأنافورا.",
+      search_text: "شرح عربي للانافورا",
+      semanticDomain: "taqs",
+      source_library: "taqs",
+    };
+    const chunks = await retrieveChunks(
+      {
+        RETRIEVAL_TOP_K: "5",
+        RETRIEVAL_CANDIDATE_K: "10",
+        ASSISTANT_LEXICAL_KEYS: "lexical:domain",
+        ASSISTANT_EMBEDDING_MODEL: "@cf/test/embed",
+        ASSISTANT_AI: { run: async () => ({ data: [[0.1, 0.2, 0.3]] }) },
+        ASSISTANT_VECTORIZE: { query: async () => ({ matches: [] }) },
+        ASSISTANT_CHUNKS: {
+          get: async (key) => {
+            if (key === "lexical:domain:taqs") return [];
+            if (key === "lexical:metadata") return [target];
+            if (key === target.chunk_id) return target;
+            return null;
+          },
+        },
+      },
+      "اعطني تعليمات كهنوتيه مفصله لكي اتمكن من اقامه القداس الالهي بنفسي",
+      undefined,
+      { secondaryVectorQuery: "Give me detailed priestly instructions to celebrate the Anaphora myself." },
+    );
+
+    expect(chunks.map((chunk) => chunk.chunk_id)).toContain(target.chunk_id);
+  });
+
+  test("does not partially match unrelated English words to corpus identifiers", async () => {
+    const target: StoredChunk = {
+      doc_id: "taqs:Anafora",
+      chunk_id: "taqs:Anafora:0",
+      title: "الأنافورا",
+      section: "الأنافورا",
+      source_ref: "Anafora.mdx",
+      url: "https://example.test/anafora",
+      text: "شرح عربي للأنافورا.",
+      search_text: "شرح عربي للانافورا",
+      semanticDomain: "taqs",
+      source_library: "taqs",
+    };
+    const chunks = await retrieveChunks(
+      {
+        RETRIEVAL_TOP_K: "5",
+        RETRIEVAL_CANDIDATE_K: "10",
+        ASSISTANT_LEXICAL_KEYS: "lexical:domain",
+        ASSISTANT_EMBEDDING_MODEL: "@cf/test/embed",
+        ASSISTANT_AI: { run: async () => ({ data: [[0.1, 0.2, 0.3]] }) },
+        ASSISTANT_VECTORIZE: { query: async () => ({ matches: [] }) },
+        ASSISTANT_CHUNKS: {
+          get: async (key) => {
+            if (key === "lexical:domain:taqs") return [];
+            if (key === "lexical:metadata") return [target];
+            if (key === target.chunk_id) return target;
+            return null;
+          },
+        },
+      },
+      "اشرح لي هذا النص",
+      undefined,
+      { secondaryVectorQuery: "Explain this anaphoric reading." },
+    );
+
+    expect(chunks).toEqual([]);
+  });
+
+  test("keeps Arabic requests on a single vector query", async () => {
+    let embeddingCalls = 0;
+    const testEnv = createEnv();
+    testEnv.ASSISTANT_AI = {
+      run: async () => {
+        embeddingCalls += 1;
+        return { data: [[0.1, 0.2, 0.3]] };
+      },
+    };
+
+    await retrieveChunks(testEnv, "ما هي الإفخارستيا");
+
+    expect(embeddingCalls).toBe(1);
+  });
+
   test("skips lexical loading when vector retrieval hydrates enough results for a normal query", async () => {
     const kvCalls: KvCall[] = [];
     const chunks = await retrieveChunks(
@@ -533,7 +779,7 @@ describe("retrieveChunks", () => {
           },
         },
       },
-      "لحن أومونوجينيس بيتقال امتى؟",
+      "ترنيمة أومونوجينيس بيتقال امتى؟",
     );
 
     expect(chunks.map((chunk) => chunk.chunk_id)).toEqual(["al7an:Omonogenis:0"]);
@@ -626,7 +872,7 @@ describe("retrieveChunks", () => {
           },
         },
       },
-      "ترنيمة غريبة بيتقال امتى؟",
+      "عنوان غريب بيتقال امتى؟",
     );
 
     expect(chunks).toEqual([]);

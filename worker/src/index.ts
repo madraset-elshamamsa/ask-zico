@@ -260,7 +260,12 @@ app.post("/api/assistant/message", async (c) => {
   const responseNormalizedQuery = access.role === "eval"
     ? normalizedQuery
     : normalizeArabicForSearch(request.message);
-  const retrievedChunks = await retrieveChunks(c.env, normalizedQuery, cpu);
+  const retrievedChunks = await retrieveChunks(
+    c.env,
+    normalizedQuery,
+    cpu,
+    translated?.ok ? { secondaryVectorQuery: sourceQuery } : undefined,
+  );
   const chunks = request.follow_up
     ? mergeChunks(
       await hydrateChunksByIds(c.env, request.follow_up.previous_cited_chunk_ids),
@@ -808,7 +813,11 @@ app.post("/debug/retrieval", async (c) => {
   }
   const retrievalQuery = translated?.ok ? translated.query : sourceQuery;
   const normalizedQuery = normalizeArabicForSearch(retrievalQuery);
-  const report = await debugRetrieveChunks(c.env, normalizedQuery);
+  const report = await debugRetrieveChunks(
+    c.env,
+    normalizedQuery,
+    translated?.ok ? { secondaryVectorQuery: sourceQuery } : undefined,
+  );
   const internalResponse = createRetrievalOnlyResponse({
     conversationId: request.conversation_id,
     query: request.message,

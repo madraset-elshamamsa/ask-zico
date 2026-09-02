@@ -174,8 +174,19 @@ describe("multilingual assistant worker", () => {
   });
 
   test("translates English before evaluator retrieval and exposes translation debug", async () => {
+    const embeddingInputs: string[] = [];
     const fixture = languageFailureEnv({
       ASSISTANT_EVAL_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_EMBEDDING_MODEL: "@cf/test/embed",
+      ASSISTANT_AI: {
+        run: async (_model, input) => {
+          embeddingInputs.push(String((input as { text?: string[] }).text?.[0] ?? ""));
+          return { data: [[0.1, 0.2, 0.3]] };
+        },
+      },
+      ASSISTANT_VECTORIZE: {
+        query: async () => ({ matches: [{ id: arabicChunk.chunk_id, score: 0.91 }] }),
+      },
       ASSISTANT_CHUNKS: {
         get: async (key) => key === "lexical:wa3zat" ? [arabicChunk] : key === arabicChunk.chunk_id ? arabicChunk : null,
       },
@@ -190,6 +201,7 @@ describe("multilingual assistant worker", () => {
     expect(body.debug?.normalized_query).toBe("ما هو الطريق الداخلي");
     expect(body.debug?.translation).toMatchObject({ status: "translated", provider: "gemini", retrieval_query: "ما هو الطريق الداخلي؟" });
     expect(body.retrieved_chunks[0]?.title).toBe("الطريق الداخلي");
+    expect(embeddingInputs).toEqual(["ما هو الطريق الداخلي", "What is the inner path?"]);
   });
 
   test("reserves evaluator quota before translation and records retrieval-only observability and usage", async () => {

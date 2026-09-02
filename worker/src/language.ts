@@ -105,13 +105,6 @@ function scriptLetterCounts(value: string): { arabic: number; latin: number; oth
   return { arabic, latin, other };
 }
 
-function canonicalizeArabicRetrievalQuery(value: string): string {
-  return value
-    .replace(/الترتيلة|ترتيلة/gu, "لحن")
-    .replace(/ما هي الأحداث الرئيسية/gu, "ما أهم الأحداث")
-    .replace(/الأحداث الرئيسية/gu, "أهم الأحداث");
-}
-
 export async function translateEnglishRetrievalQuery(query: string, env: Env): Promise<TranslationResult> {
   const startedAt = Date.now();
   const fetchImpl: AssistantLlmFetch = env.ASSISTANT_LLM_FETCH ?? fetch;
@@ -121,7 +114,6 @@ export async function translateEnglishRetrievalQuery(query: string, env: Env): P
     "Translate literally without paraphrasing or broadening the query.",
     "Preserve every Coptic term, hymn title, proper name, and quoted term exactly, and also add its canonical Arabic spelling or transliteration next to it when known.",
     "Translate standard English liturgical terms into their canonical Arabic terms.",
-    "Use these canonical corpus terms when applicable: Omonogenis = أومونوجينيس; Barzillai the Gileadite = برزلاي الجلعادي; Jephthah = يفتاح; Anaphora = الأنافورا; Holy Week = أسبوع الآلام; oblation = القربانة.",
     "Do not add facts, titles, or qualifiers that are not present in the English query.",
     "Return only the Arabic query.",
     "\n" + query,
@@ -140,8 +132,7 @@ export async function translateEnglishRetrievalQuery(query: string, env: Env): P
       });
       if (response.ok) {
         const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-        const translatedText = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
-        const translated = translatedText ? canonicalizeArabicRetrievalQuery(translatedText) : translatedText;
+        const translated = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
         if (translated && isMeaningfullyArabic(translated)) {
           providerAttempts.push({ provider: "gemini", model: geminiModel, ok: true, operation: "translation" });
           return { ok: true, query: translated, provider: "gemini", latencyMs: Date.now() - startedAt, providerAttempts, modelCalls: 1, estimatedModelCostUsd: estimateModelCostUsd(env) };
@@ -166,8 +157,7 @@ export async function translateEnglishRetrievalQuery(query: string, env: Env): P
       });
       if (response.ok) {
         const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-        const translatedText = payload.choices?.[0]?.message?.content?.trim();
-        const translated = translatedText ? canonicalizeArabicRetrievalQuery(translatedText) : translatedText;
+        const translated = payload.choices?.[0]?.message?.content?.trim();
         if (translated && isMeaningfullyArabic(translated)) {
           providerAttempts.push({ provider: "openrouter", model: openRouterModel, ok: true, operation: "translation" });
           return { ok: true, query: translated, provider: "openrouter", latencyMs: Date.now() - startedAt, providerAttempts, modelCalls: providerAttempts.length, estimatedModelCostUsd: providerAttempts.length * estimateModelCostUsd(env) };

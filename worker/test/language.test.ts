@@ -71,16 +71,15 @@ describe("detectMessageLanguage", () => {
     });
   });
 
-  test("provides canonical corpus terminology for ambiguous liturgical terms", async () => {
+  test("does not embed a query-specific terminology glossary in the translation prompt", async () => {
     const result = await translateEnglishRetrievalQuery("How is the Anaphora prayed?", {
       ASSISTANT_GEMINI_API_KEY: "gemini-key",
       ASSISTANT_LLM_FETCH: async (_url, init) => {
         const request = JSON.parse(String(init?.body)) as { contents?: Array<{ parts?: Array<{ text?: string }> }> };
         const prompt = request.contents?.[0]?.parts?.[0]?.text ?? "";
-        const translated = prompt.includes("Anaphora = الأنافورا")
-          ? "كيف تُصلى الأنافورا (Anaphora)؟"
-          : "كيف يُصلى القداس الإلهي (Anaphora)؟";
-        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: translated }] } }] }));
+        expect(prompt).not.toContain("Anaphora = الأنافورا");
+        expect(prompt).not.toContain("Omonogenis = أومونوجينيس");
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "كيف تُصلى الأنافورا (Anaphora)؟" }] } }] }));
       },
     } as Env);
 
@@ -108,15 +107,15 @@ describe("detectMessageLanguage", () => {
       label: "canonical hymn terminology",
       english: "What does the hymn title Omonogenis mean?",
       providerOutput: "ما معنى عنوان الترتيلة أومونوجينيس (Omonogenis)؟",
-      expected: "ما معنى عنوان لحن أومونوجينيس (Omonogenis)؟",
+      expected: "ما معنى عنوان الترتيلة أومونوجينيس (Omonogenis)؟",
     },
     {
       label: "literal main-events phrasing",
       english: "What were the main events in David's life?",
       providerOutput: "ما هي الأحداث الرئيسية في حياة داود (David)؟",
-      expected: "ما أهم الأحداث في حياة داود (David)؟",
+      expected: "ما هي الأحداث الرئيسية في حياة داود (David)؟",
     },
-  ])("canonicalizes $label after provider translation", async ({ english, providerOutput, expected }) => {
+  ])("returns the provider's $label translation without hardcoded rewriting", async ({ english, providerOutput, expected }) => {
     const result = await translateEnglishRetrievalQuery(english, {
       ASSISTANT_GEMINI_API_KEY: "gemini-key",
       ASSISTANT_LLM_FETCH: async () => new Response(JSON.stringify({
