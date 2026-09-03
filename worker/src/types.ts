@@ -196,6 +196,7 @@ export type AssistantObservabilityFilters = {
 export type AssistantObservabilityTotals = {
   total_queries: number;
   answered_queries: number;
+  retrieval_only_queries: number;
   retrieved_references: number;
   cited_references: number;
   likes: number;
@@ -223,6 +224,7 @@ export type AssistantObservabilitySummary = {
     confidence: string | null;
     answer_mode: string | null;
     answer_failure_reason: string | null;
+    response_kind: string | null;
     rating: string | null;
     semantic_domains_json: string;
     answer_preview: string | null;

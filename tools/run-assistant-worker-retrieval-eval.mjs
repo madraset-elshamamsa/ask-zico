@@ -88,7 +88,7 @@ export function loadJsonl(filePath) {
 export async function callAssistantWorker({ endpoint, token, item, includeDebug = true, fetchImpl = fetch }) {
   const locale = evalItemLocale(item);
   const startedAt = performance.now();
-  const response = await fetchImpl(endpoint, {
+  const response = await fetchWithNetworkRetries(fetchImpl, endpoint, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -121,6 +121,18 @@ export async function callAssistantWorker({ endpoint, token, item, includeDebug 
   }
 
   return { body, duration_ms: durationMs, status: response.status };
+}
+
+async function fetchWithNetworkRetries(fetchImpl, endpoint, init, maxAttempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchImpl(endpoint, init);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 function evalItemLocale(item) {

@@ -46,6 +46,86 @@ describe("detectMessageLanguage", () => {
     expect(result).toMatchObject({ ok: true, query: "ما هو الطريق الداخلي؟", provider: "gemini", estimatedModelCostUsd: 0.001 });
   });
 
+  test("asks the translator to preserve source terms and add canonical Arabic aliases without extra details", async () => {
+    const result = await translateEnglishRetrievalQuery("When is the Omonogenis hymn chanted?", {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as { contents?: Array<{ parts?: Array<{ text?: string }> }> };
+        const prompt = request.contents?.[0]?.parts?.[0]?.text ?? "";
+        const followsRetrievalContract = prompt.includes("add its canonical Arabic spelling or transliteration")
+          && prompt.includes("Do not add facts, titles, or qualifiers");
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{
+            text: followsRetrievalContract
+              ? "متى يُقال لحن أومونوجينيس (Omonogenis)؟"
+              : "متى يُقال لحن Omonogenis؟",
+          }] } }],
+        }));
+      },
+    } as Env);
+
+    expect(result).toMatchObject({
+      ok: true,
+      query: "متى يُقال لحن أومونوجينيس (Omonogenis)؟",
+      provider: "gemini",
+    });
+  });
+
+  test("does not embed a query-specific terminology glossary in the translation prompt", async () => {
+    const result = await translateEnglishRetrievalQuery("How is the Anaphora prayed?", {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as { contents?: Array<{ parts?: Array<{ text?: string }> }> };
+        const prompt = request.contents?.[0]?.parts?.[0]?.text ?? "";
+        expect(prompt).not.toContain("Anaphora = الأنافورا");
+        expect(prompt).not.toContain("Omonogenis = أومونوجينيس");
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "كيف تُصلى الأنافورا (Anaphora)؟" }] } }] }));
+      },
+    } as Env);
+
+    expect(result).toMatchObject({ ok: true, query: "كيف تُصلى الأنافورا (Anaphora)؟" });
+  });
+
+  test("asks for literal retrieval translation without paraphrasing or broadening", async () => {
+    const result = await translateEnglishRetrievalQuery("What were the main events in David's life?", {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async (_url, init) => {
+        const request = JSON.parse(String(init?.body)) as { contents?: Array<{ parts?: Array<{ text?: string }> }> };
+        const prompt = request.contents?.[0]?.parts?.[0]?.text ?? "";
+        const translated = prompt.includes("Translate literally without paraphrasing or broadening")
+          ? "ما أهم الأحداث في حياة داود (David)؟"
+          : "ما هي الأحداث الرئيسية في حياة داود النبي (David)؟";
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: translated }] } }] }));
+      },
+    } as Env);
+
+    expect(result).toMatchObject({ ok: true, query: "ما أهم الأحداث في حياة داود (David)؟" });
+  });
+
+  test.each([
+    {
+      label: "canonical hymn terminology",
+      english: "What does the hymn title Omonogenis mean?",
+      providerOutput: "ما معنى عنوان الترتيلة أومونوجينيس (Omonogenis)؟",
+      expected: "ما معنى عنوان الترتيلة أومونوجينيس (Omonogenis)؟",
+    },
+    {
+      label: "literal main-events phrasing",
+      english: "What were the main events in David's life?",
+      providerOutput: "ما هي الأحداث الرئيسية في حياة داود (David)؟",
+      expected: "ما هي الأحداث الرئيسية في حياة داود (David)؟",
+    },
+  ])("returns the provider's $label translation without hardcoded rewriting", async ({ english, providerOutput, expected }) => {
+    const result = await translateEnglishRetrievalQuery(english, {
+      ASSISTANT_GEMINI_API_KEY: "gemini-key",
+      ASSISTANT_LLM_FETCH: async () => new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: providerOutput }] } }],
+      })),
+    } as Env);
+
+    expect(result).toMatchObject({ ok: true, query: expected });
+  });
+
   test("uses OpenRouter when Gemini has a provider failure", async () => {
     const result = await translateEnglishRetrievalQuery("What is the inner path?", {
       ASSISTANT_GEMINI_API_KEY: "gemini-key", ASSISTANT_LLM_API_KEY: "openrouter-key", ASSISTANT_CHAT_MODEL: "test/model",

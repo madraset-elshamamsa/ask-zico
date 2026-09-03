@@ -12,6 +12,7 @@ describe("routeRetrievalDomains", () => {
   test("routes hymn and tune questions to al7an", () => {
     expect(routeRetrievalDomains("teach me the hymn tune").domains).toContain("al7an");
     expect(routeRetrievalDomains("لحن ختام الصلاة").domains).toContain("al7an");
+    expect(routeRetrievalDomains("ما مناسبة ترنيمة كنسية؟").domains).toContain("al7an");
   });
 
   test("routes ritual questions to taqs", () => {

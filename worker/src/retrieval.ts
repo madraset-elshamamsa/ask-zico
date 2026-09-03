@@ -166,7 +166,7 @@ function enabledDomains(
 }
 
 function hasExplicitAl7anIntent(normalizedQuery: string): boolean {
-  return ["لحن", "الحان", "hymn", "tune", "melody"].some((term) =>
+  return ["لحن", "الحان", "ترنيمة", "ترتيلة", "hymn", "tune", "melody"].some((term) =>
     normalizedQuery.includes(normalizeArabicForSearch(term)),
   );
 }
@@ -200,6 +200,7 @@ export async function retrieveChunks(
   env: Env,
   normalizedQuery: string,
   cpu?: AssistantCpuPhaseRecorder,
+  options: { secondaryVectorQuery?: string } = {},
 ): Promise<RetrievedChunk[]> {
   const topK = parsePositiveInt(env.RETRIEVAL_TOP_K, DEFAULT_TOP_K, 20);
   const candidateK = parsePositiveInt(
@@ -210,6 +211,7 @@ export async function retrieveChunks(
 
   const searchQuery = normalizeArabicForSearch(normalizedQuery).toLowerCase();
   const queryFeatures = createLexicalQueryFeatures(searchQuery);
+  const secondaryVectorQuery = options.secondaryVectorQuery?.trim();
   const route = routeRetrievalDomains(searchQuery);
   const explicitAl7anIntent = hasExplicitAl7anIntent(searchQuery);
   let routedDomains = enabledDomains(route.domains, env, explicitAl7anIntent);
@@ -220,6 +222,7 @@ export async function retrieveChunks(
       queryFeatures,
       candidateK,
       cpu,
+      secondaryVectorQuery,
     );
     routedDomains = enabledDomains(
       discoveredMetadataDomains(routedDomains, preloadedMetadataCandidates),
@@ -227,13 +230,27 @@ export async function retrieveChunks(
       explicitAl7anIntent,
     );
   }
-  const vectorCandidates = await retrieveVectorCandidates(
-    env,
-    searchQuery,
-    candidateK,
-    routedDomains,
-    cpu,
-  );
+  const [primaryVectorCandidates, secondaryVectorCandidates] = await Promise.all([
+    retrieveVectorCandidates(
+      env,
+      searchQuery,
+      candidateK,
+      routedDomains,
+      cpu,
+    ),
+    secondaryVectorQuery
+      ? retrieveVectorCandidates(
+        env,
+        secondaryVectorQuery,
+        candidateK,
+        routedDomains,
+        cpu,
+        searchQuery,
+      ).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+  const rawVectorCandidates = [...primaryVectorCandidates, ...secondaryVectorCandidates];
+  const vectorCandidates = fuseCandidates(rawVectorCandidates);
   const hydrationCache = new Map<string, unknown>();
   const vectorOnly = await hydrateCandidates(env, vectorCandidates, topK, cpu, "vector_hydration", hydrationCache);
   const shouldRunLexical = shouldRunLexicalFallback(
@@ -271,10 +288,11 @@ export async function retrieveChunks(
   const retrievedMetadataCandidates =
     Boolean(preloadedMetadataCandidates?.length) ||
       !vectorCandidates.length ||
+      Boolean(secondaryVectorQuery) ||
       shouldUseMetadataFallback(routedDomains, route.scores) ||
       (vectorCandidates[0]?.score ?? 1) < LEXICAL_LOW_VECTOR_SCORE_THRESHOLD
       ? preloadedMetadataCandidates ??
-        await retrieveMetadataCandidates(env, queryFeatures, candidateK, cpu)
+        await retrieveMetadataCandidates(env, queryFeatures, candidateK, cpu, secondaryVectorQuery)
       : [];
   const eligibleMetadataCandidates = filterQuietMetadataCandidates(
     retrievedMetadataCandidates,
@@ -308,12 +326,20 @@ export async function retrieveChunks(
     ),
     ...metadataForFusion,
   ];
-  const candidatesForFusion = [...vectorCandidates, ...fallbackCandidates];
+  const candidatesForFusion = [...rawVectorCandidates, ...fallbackCandidates];
   const fused = fuseCandidates(
     candidatesForFusion,
     route.strictDomains ? { lexicalScoreWeight: 0, vectorRankWeight: 1.3 } : undefined,
   );
-  const hydrated = await hydrateCandidates(env, fused, topK, cpu, "final_hydration", hydrationCache);
+  const hydrated = await hydrateCandidates(
+    env,
+    fused,
+    topK,
+    cpu,
+    "final_hydration",
+    hydrationCache,
+    Boolean(secondaryVectorQuery),
+  );
 
   return hydrated.slice(0, topK);
 }
@@ -395,6 +421,7 @@ export async function hydrateChunksByIds(
 export async function debugRetrieveChunks(
   env: Env,
   normalizedQuery: string,
+  options: { secondaryVectorQuery?: string } = {},
 ): Promise<RetrievalDebugReport> {
   const topK = parsePositiveInt(env.RETRIEVAL_TOP_K, DEFAULT_TOP_K, 20);
   const candidateK = parsePositiveInt(
@@ -405,6 +432,7 @@ export async function debugRetrieveChunks(
   const sampleKey = "wa3zat:ElTariqElDa5ely:0";
   const route = routeRetrievalDomains(normalizedQuery);
   const queryFeatures = createLexicalQueryFeatures(normalizedQuery);
+  const secondaryVectorQuery = options.secondaryVectorQuery?.trim();
   const explicitAl7anIntent = hasExplicitAl7anIntent(normalizedQuery);
   let routedDomains = enabledDomains(route.domains, env, explicitAl7anIntent);
   if (shouldDiscoverDomainsFromMetadata(queryFeatures, route.scores)) {
@@ -412,6 +440,8 @@ export async function debugRetrieveChunks(
       env,
       queryFeatures,
       candidateK,
+      undefined,
+      secondaryVectorQuery,
     );
     routedDomains = enabledDomains(
       discoveredMetadataDomains(routedDomains, metadataCandidates),
@@ -429,6 +459,7 @@ export async function debugRetrieveChunks(
     route.scores,
   );
 
+  let rawVectorCandidates: RetrievalCandidate[] = [];
   let vectorCandidates: RetrievalCandidate[] = [];
   let embeddingLength = 0;
   let vectorError: string | undefined;
@@ -439,7 +470,18 @@ export async function debugRetrieveChunks(
       candidateK,
       routedDomains,
     );
-    vectorCandidates = vectorDebug.candidates;
+    const secondaryCandidates = secondaryVectorQuery
+      ? await retrieveVectorCandidates(
+        env,
+        secondaryVectorQuery,
+        candidateK,
+        routedDomains,
+        undefined,
+        normalizedQuery,
+      ).catch(() => [])
+      : [];
+    rawVectorCandidates = [...vectorDebug.candidates, ...secondaryCandidates];
+    vectorCandidates = fuseCandidates(rawVectorCandidates);
     embeddingLength = vectorDebug.embeddingLength;
   } catch (error) {
     vectorError = error instanceof Error ? error.message : String(error);
@@ -457,10 +499,18 @@ export async function debugRetrieveChunks(
   }
 
   const fused = fuseCandidates(
-    [...vectorCandidates, ...lexicalCandidates],
+    [...rawVectorCandidates, ...lexicalCandidates],
     route.strictDomains ? { lexicalScoreWeight: 0, vectorRankWeight: 1.3 } : undefined,
   );
-  const hydrated = await hydrateCandidates(env, fused, topK);
+  const hydrated = await hydrateCandidates(
+    env,
+    fused,
+    topK,
+    undefined,
+    "hydration_wall",
+    undefined,
+    Boolean(secondaryVectorQuery),
+  );
   const requestedIds = fused.slice(0, topK).map((candidate) => candidate.chunk_id);
   const hydratedIds = new Set(hydrated.map((chunk) => chunk.chunk_id));
 
@@ -522,8 +572,16 @@ async function retrieveVectorCandidates(
   candidateK: number,
   routedDomains: SemanticDomain[],
   cpu?: AssistantCpuPhaseRecorder,
+  filterQuery = normalizedQuery,
 ): Promise<RetrievalCandidate[]> {
-  return (await retrieveVectorCandidatesWithDebug(env, normalizedQuery, candidateK, routedDomains, cpu))
+  return (await retrieveVectorCandidatesWithDebug(
+    env,
+    normalizedQuery,
+    candidateK,
+    routedDomains,
+    cpu,
+    filterQuery,
+  ))
     .candidates;
 }
 
@@ -533,6 +591,7 @@ async function retrieveVectorCandidatesWithDebug(
   candidateK: number,
   routedDomains: SemanticDomain[] = routeRetrievalDomains(normalizedQuery).domains,
   cpu?: AssistantCpuPhaseRecorder,
+  filterQuery = normalizedQuery,
 ): Promise<{ candidates: RetrievalCandidate[]; embeddingLength: number }> {
   if (!env.ASSISTANT_AI || !env.ASSISTANT_VECTORIZE || !env.ASSISTANT_EMBEDDING_MODEL) {
     return { candidates: [], embeddingLength: 0 };
@@ -557,7 +616,7 @@ async function retrieveVectorCandidatesWithDebug(
   const queryOptions = {
     topK: candidateK,
     returnMetadata: true,
-    filter: vectorDomainFilter(routedDomains, env, normalizedQuery),
+    filter: vectorDomainFilter(routedDomains, env, filterQuery),
   };
   let result;
   try {
@@ -684,6 +743,7 @@ async function retrieveMetadataCandidates(
   queryFeatures: LexicalQueryFeatures,
   candidateK: number,
   cpu?: AssistantCpuPhaseRecorder,
+  identifierQuery?: string,
 ): Promise<RetrievalCandidate[]> {
   const loadStartedAt = performance.now();
   const routedDomains = enabledDomains(routeRetrievalDomains(queryFeatures.normalizedQuery).domains, env);
@@ -704,6 +764,7 @@ async function retrieveMetadataCandidates(
   const candidates = corpus
     .filter(isLexicalRecord)
     .map((chunk) => {
+      const identifierScore = scoreMetadataIdentifierMatch(chunk, identifierQuery);
       const dateMatch = Boolean(
         seneksarDateKey &&
         chunk.source_library === "seneksar" &&
@@ -711,8 +772,10 @@ async function retrieveMetadataCandidates(
       );
       return {
         chunk,
-        score: scoreMetadataChunk(chunk, queryFeatures) + (dateMatch ? 1000 : 0),
-        structuredMatch: dateMatch || hasMetadataIdentityMatch(chunk, queryFeatures),
+        score: Math.max(scoreMetadataChunk(chunk, queryFeatures), identifierScore) +
+          (dateMatch ? 1000 : 0),
+        structuredMatch: dateMatch || identifierScore > 0 ||
+          hasMetadataIdentityMatch(chunk, queryFeatures),
       };
     })
     .filter((entry) => entry.score > 0)
@@ -883,6 +946,27 @@ function scoreMetadataChunk(chunk: LexicalRecord, query: LexicalQueryFeatures): 
   const exactNameBoost = title === query.normalizedQuery || section === query.normalizedQuery ? 80 : 0;
   return exactNameBoost + scoreLexicalChunk({ ...chunk, text: undefined, search_text: undefined }, query);
 }
+
+function scoreMetadataIdentifierMatch(
+  chunk: LexicalRecord,
+  query: string | undefined,
+): number {
+  if (!query) return 0;
+
+  const queryTokens = new Set(identifierTokens(query));
+  if (!queryTokens.size) return 0;
+
+  const identifierValues = [chunk.doc_id, chunk.source_ref]
+    .flatMap((value) => identifierTokens(value ?? ""));
+  return identifierValues.some((token) => queryTokens.has(token)) ? 80 : 0;
+}
+
+function identifierTokens(value: string): string[] {
+  return (value.normalize("NFKD").toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .map((token) => token.replace(/ph/g, "f"))
+    .filter((token) => token.length >= 4);
+}
+
 function hasMetadataIdentityMatch(
   chunk: LexicalRecord,
   query: LexicalQueryFeatures,
@@ -1327,9 +1411,11 @@ async function hydrateCandidates(
   cpu?: AssistantCpuPhaseRecorder,
   phaseName = "hydration_wall",
   cache?: Map<string, unknown>,
+  distinctDocuments = false,
 ): Promise<RetrievedChunk[]> {
   const startedAt = performance.now();
   const chunks: RetrievedChunk[] = [];
+  const seenDocumentIds = new Set<string>();
 
   for (const candidate of candidates) {
     let stored: unknown = candidate.chunk ?? cache?.get(candidate.chunk_id);
@@ -1345,6 +1431,10 @@ async function hydrateCandidates(
     }
     const chunk = toRetrievedChunk(stored, candidate.score);
     if (chunk) {
+      if (distinctDocuments && seenDocumentIds.has(chunk.doc_id)) {
+        continue;
+      }
+      seenDocumentIds.add(chunk.doc_id);
       chunks.push(chunk);
     }
     if (chunks.length >= limit) {

@@ -45,6 +45,24 @@ test("sends each eval item's declared UI locale", async () => {
   assert.equal(JSON.parse(request.body).locale, "en");
 });
 
+test("retries transient network failures before failing an eval row", async () => {
+  const { callAssistantWorker } = await import(scriptUrl);
+  let attempts = 0;
+  const response = await callAssistantWorker({
+    endpoint: "https://worker.example/api/assistant/message",
+    token: "eval-token",
+    item: { id: "eval-retry", query: "test" },
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError("fetch failed");
+      return new Response(JSON.stringify({ retrieved_chunks: [] }), { status: 200 });
+    },
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(response.status, 200);
+});
+
 test("rejects an invalid explicit locale instead of coercing it to Arabic", async () => {
   const { callAssistantWorker } = await import(scriptUrl);
 
