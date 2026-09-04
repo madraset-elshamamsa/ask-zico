@@ -1135,7 +1135,7 @@ describe("createGroundedAnswer", () => {
     });
   });
 
-  test("prompt allows constrained markdown and warns about conflicting chunks and remedies", async () => {
+  test("prompt requires readable markdown structure for multi-part answers", async () => {
     const requests: Record<string, unknown>[] = [];
     await createGroundedAnswer(
       {
@@ -1169,6 +1169,8 @@ describe("createGroundedAnswer", () => {
 
     const systemPrompt = JSON.stringify(requests[0]);
     expect(systemPrompt).toContain("Markdown");
+    expect(systemPrompt).toContain("separate bullet item or paragraph");
+    expect(systemPrompt).toContain("Never place multiple bold section labels in one paragraph");
     expect(systemPrompt).toContain("prefer chunks whose title or section best matches");
     expect(systemPrompt).toContain("Do not confuse remedies, protections, or safeguards");
     expect(systemPrompt).toContain("Do not include raw HTML");
