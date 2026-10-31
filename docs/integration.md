@@ -21,6 +21,12 @@ Vectorize, a corpus, or model-provider credentials.
 ## Proxy responsibilities
 
 - Keep `ASSISTANT_PROXY_TOKEN` server-side and redact it from logs.
+- Reject messages containing fewer than two Unicode letters or digits in the browser
+  and again in PHP before challenge verification or any Worker request. Punctuation,
+  whitespace, combining marks and invisible characters do not count. Return a local
+  HTTP 400 (`invalid_message`) and localized UI feedback; preserve short replies such
+  as `hi` and `لا`. The Worker independently returns HTTP 400 (`invalid_request`)
+  before rate limits, retrieval, model calls, quota consumption or query-event writes.
 - Accept only same-site requests using the consumer's existing session/CSRF controls.
 - Derive opaque `actor_id` and `network_id` values; do not send raw IP addresses or email
   addresses to Ask Zico.

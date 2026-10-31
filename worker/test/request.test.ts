@@ -2,6 +2,16 @@ import { describe, expect, test } from "vitest";
 import { parseAssistantMessageRequest } from "../src/request";
 
 describe("parseAssistantMessageRequest", () => {
+  test.each(["b", " ب ", "b?", "بَ", "😀", "?!", "b\u200b", "b   "])(
+    "rejects messages with fewer than two letters or digits: %s", (message) => {
+      expect(parseAssistantMessageRequest({ message })).toBeNull();
+    },
+  );
+
+  test.each(["hi", "لا", "نعم", "  لا  ", "يو 3"])("accepts short meaningful messages: %s", (message) => {
+    expect(parseAssistantMessageRequest({ message })?.message).toBe(message.trim());
+  });
+
   test("parses one-turn follow-up context when provided", () => {
     const request = parseAssistantMessageRequest({
       conversation_id: "conversation-1",

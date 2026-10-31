@@ -10,7 +10,8 @@ export function parseAssistantMessageRequest(value: unknown): AssistantMessageRe
 
   const candidate = value as Partial<AssistantMessageRequest>;
   const message = normalizeString(candidate.message, MAX_MESSAGE_CHARS);
-  if (!message) {
+  // Marks, punctuation and invisible padding must not turn one letter into a query.
+  if (!message || (message.match(/[\p{L}\p{N}]/gu)?.length ?? 0) < 2) {
     return null;
   }
 

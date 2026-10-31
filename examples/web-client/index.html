@@ -37,7 +37,7 @@
 
     <form aria-label="اسأل زيكو" data-i18n-aria-label="formLabel">
       <label for="message" data-i18n="promptLabel">سؤالك</label>
-      <textarea id="message" name="message" maxlength="800" required placeholder="اكتب سؤالك هنا…" data-i18n-placeholder="placeholder"></textarea>
+      <textarea id="message" name="message" minlength="2" maxlength="800" required placeholder="اكتب سؤالك هنا…" data-i18n-placeholder="placeholder"></textarea>
       <button type="submit" data-i18n="send">إرسال</button>
     </form>
 
@@ -65,6 +65,7 @@
           placeholder: "اكتب سؤالك هنا…", send: "إرسال", exampleAnswerLabel: "مثال للإجابة",
           exampleAnswer: "تظل عناوين المصادر ومقتطفاتها بالعربية لأنها بيانات المصدر الأصلية.",
           sources: "المصادر",
+          messageTooShort: "اكتب سؤالاً يحتوي على حرفين أو رقمين على الأقل.",
           security: "اربط هذه الواجهة بخادم وسيط موثوق. لا تضع بيانات اعتماد الـWorker في كود المتصفح."
         },
         en: {
@@ -73,12 +74,20 @@
           placeholder: "Type your question…", send: "Send", exampleAnswerLabel: "Example answer",
           exampleAnswer: "Source titles and snippets remain Arabic because they are canonical source metadata.",
           sources: "Sources",
+          messageTooShort: "Please enter at least two letters or digits.",
           security: "Connect this UI through a trusted server-side proxy. Never put Worker credentials in browser code."
         }
       };
 
       const saved = localStorage.getItem(storageKey);
       const browserLocale = navigator.languages.find((value) => /^ar(?:-|$)/i.test(value)) ? "ar" : "en";
+      const input = document.querySelector("#message");
+
+      function validateMessage() {
+        const valid = (input.value.match(/[\p{L}\p{N}]/gu)?.length ?? 0) >= 2;
+        input.setCustomValidity(valid ? "" : messages[document.documentElement.lang].messageTooShort);
+      }
+      input.addEventListener("input", validateMessage);
 
       function applyLocale(locale, persist = false) {
         const selected = locale === "en" ? "en" : "ar";
@@ -90,6 +99,7 @@
         document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => { node.setAttribute("aria-label", catalog[node.dataset.i18nAriaLabel]); });
         document.querySelectorAll("[data-locale]").forEach((button) => { button.setAttribute("aria-pressed", String(button.dataset.locale === selected)); });
         if (persist) localStorage.setItem(storageKey, selected);
+        validateMessage();
       }
 
       document.querySelectorAll("[data-locale]").forEach((button) => {

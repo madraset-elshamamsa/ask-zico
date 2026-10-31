@@ -172,7 +172,12 @@ components:
       additionalProperties: false
       required: [message]
       properties:
-        message: { type: string, minLength: 1, maxLength: 800 }
+        message:
+          type: string
+          minLength: 2
+          maxLength: 800
+          pattern: '[\s\S]*[\p{L}\p{N}][\s\S]*[\p{L}\p{N}]'
+          description: Must contain at least two Unicode letters or digits. Whitespace, punctuation, combining marks and invisible characters do not count toward this minimum.
         session_id: { $ref: '#/components/schemas/NonEmptyString' }
         conversation_id: { $ref: '#/components/schemas/NonEmptyString' }
         assistant_device_id: { $ref: '#/components/schemas/NonEmptyString', deprecated: true }

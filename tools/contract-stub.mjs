@@ -37,7 +37,8 @@ export async function handleContractRequest(request, options = {}) {
   }
 
   if (url.pathname === "/api/assistant/message") {
-    if (typeof body?.message !== "string" || !body.message.trim()) {
+    if (typeof body?.message !== "string" || body.message.trim().length > 800 ||
+        (body.message.match(/[\p{L}\p{N}]/gu)?.length ?? 0) < 2) {
       return Response.json({ error: "invalid_request" }, { status: 400, headers });
     }
     const response = await fixture("message-response.json");

@@ -2,6 +2,11 @@
 // Reference only: keep this code in your own trusted server environment.
 // Never expose the Worker token to a browser.
 function ask_zico_proxy(string $workerBaseUrl, string $proxyToken, array $payload): array {
+    $message = $payload['message'] ?? null;
+    if (!is_string($message) || preg_match_all('/[\p{L}\p{N}]/u', $message) < 2) {
+        // Map this exception to a local HTTP 400 response in the consuming endpoint.
+        throw new InvalidArgumentException('Message must contain at least two letters or digits.');
+    }
     $request = curl_init(rtrim($workerBaseUrl, '/') . '/api/assistant/message');
     curl_setopt_array($request, [
         CURLOPT_POST => true,

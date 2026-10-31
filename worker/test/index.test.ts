@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import app from "../src/index";
 import type { AssistantMessageResponse, Env, StoredChunk } from "../src/types";
 
@@ -28,6 +28,27 @@ function createEnv(chunks: StoredChunk[], overrides: Partial<Env> = {}): Env {
 }
 
 describe("assistant worker", () => {
+  test.each(["b", "بَ", "b?", "😀"])("rejects junk before using any bindings: %s", async (message) => {
+    const resourceCall = vi.fn(() => { throw new Error("Invalid input must not use resources"); });
+    const response = await app.request("/api/assistant/message", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-assistant-proxy-token": "proxy-token" },
+      body: JSON.stringify({ message }),
+    }, createEnv([], {
+      ASSISTANT_PROXY_TOKEN: "proxy-token",
+      ASSISTANT_FEEDBACK_DB: { prepare: resourceCall },
+      ASSISTANT_CHUNKS: { get: resourceCall },
+      ASSISTANT_AI: { run: resourceCall },
+      ASSISTANT_VECTORIZE: { query: resourceCall },
+      ASSISTANT_ACTOR_RATE_LIMITER: { limit: resourceCall },
+      ASSISTANT_NETWORK_RATE_LIMITER: { limit: resourceCall },
+      ASSISTANT_LLM_FETCH: resourceCall,
+    }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_request" });
+    expect(resourceCall).not.toHaveBeenCalled();
+  });
+
   test("returns health status", async () => {
     const response = await app.request("/health", {}, createEnv([]));
 

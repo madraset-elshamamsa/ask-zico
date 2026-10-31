@@ -24,6 +24,21 @@ const fixtures = [
   ["ErrorResponse", "error-response.json"],
 ];
 
+test("message contract and stub reject single-character and padded junk messages", async () => {
+  const validate = ajv.compile({ $ref: "ask-zico-openapi#/components/schemas/AssistantMessageRequest" });
+  const fixture = JSON.parse(await readFile(path.join(contractDir, "fixtures", "message-request.json"), "utf8"));
+  for (const message of ["b", " ب ", "b?", "بَ", "😀", "?!"]) {
+    assert.equal(validate({ ...fixture, message }), false, message);
+    const response = await handleContractRequest(new Request("http://stub.test/api/assistant/message", {
+      method: "POST",
+      headers: { "x-assistant-proxy-token": "stub-proxy-token" },
+      body: JSON.stringify({ message }),
+    }));
+    assert.equal(response.status, 400, message);
+  }
+  for (const message of ["hi", "لا", "نعم"]) assert.equal(validate({ ...fixture, message }), true, message);
+});
+
 test("OpenAPI contract exposes the stable v1.1 multilingual integration endpoints", () => {
   assert.equal(spec.info.version, "1.1.0");
   assert.deepEqual(Object.keys(spec.paths).sort(), [
